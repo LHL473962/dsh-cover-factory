@@ -54,6 +54,12 @@
 - 返回里的 `refs` 分成 `{paths:[...], names:[...]}`：可以据此告诉用户「N 个歌名会先本地找，M 个路径已校验」。
 - 界面上（设置 → 翻唱工厂 → 新建任务）有同名多行输入框和一个「好球曲找不到时联网搜索（需要版权确认）」勾选框；输入框不带 placeholder，示例与说明在框下方小字里。
 
+**目标歌手声部（voice，可选）**：`auto`（默认）/ `female` / `male`，写进 `job_config.options.voice`。
+- 用户是**男歌手**、或素材明显是男声 → 建议直接传 `voice: "male"`（女歌手同理 `female`）；别只靠 auto。
+- `auto` 会按**目标曲人声**的 F0 判断期望声部；如果 `cover_setup` 返回的 `preview.voiceGuess` 里期望声部明显不对，提醒用户改成显式声部重建 job。
+- 智选**不再无条件排除男声**：先做对唱/合唱检测（同一首男女声都明显 / 男声帧占比异常），再和期望声部比对。解释「这首为什么被排除」时引用 `voiceGuess` 的 `voice` 与 `reason`，别说「男声一律排除」。
+- 非法值会返回 `BAD_VOICE`（只认 auto / female / male）。
+
 **删除 job**：cover_delete({ jobId }) 默认是软删除（工作目录移到 jobs/_deleted/，可以手动找回）；
 只有用户明确说「彻底删掉/删干净」才用 cover_delete({ jobId, mode: "purge" })，并先提醒他不可恢复。
 正在跑的任务会自动先取消再删；导出到桌面的成品不会被删。
@@ -71,6 +77,7 @@
     - 其他 code 按 decision.reason 转述。别当成功，也别自己改 job.json。
   - ENGINE_EXIT_EARLY：引擎刚启动就退出（非 exit 2），把日志尾部如实转述。
   - BAD_LIMIT：抓取 limit 不在 1-50，给默认 8。
+  - BAD_VOICE：voice 只认 auto / female / male；男歌手请改 male 再建 job。
   - REF_NOT_FOUND / REF_TOO_MANY：好球曲路径不存在（按行号）或超过 20 条；让用户改路径或先留空。
   - BAD_DELETE_MODE：删除的 mode 只能是 soft（默认，可找回）或 purge（物理删除）。
   - DEPS_MISSING：依赖体检是红的，新建任务被拦了。把返回里的 missing/hints 转述给用户，按 docs/INSTALL.md 装完再体检。
@@ -85,5 +92,5 @@
 
 - 说人话：说「推得很满」「偏快」「要 55 分钟」这种，别背 JSON，也别堆阶段编号。
 - 不吹音质：v0.1 只保证管线跑通 + 质检指标（响度 -13±1.5 LUFS、断音率 <12 次/分、音域覆盖 ≥70%）；不合格就照实说并给建议（加步数 / 换素材 / 整首移调）。
-- 对唱/合唱默认排除（男声帧 >15%），被排除要解释原因；用户坚持时再提 allowDuet 设置。
+- 对唱/合唱默认排除（低/高区双峰：各 ≥20% 且中位比 >1.5）；男歌手不会被误排除（按 voice=auto/male/female 判定）。被排除要解释原因；用户坚持时再提 allowDuet 设置。
 - 需要用户决策的（版权、硬件不够、素材不行）就停下问，不要替他决定。

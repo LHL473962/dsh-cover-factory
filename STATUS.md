@@ -7,7 +7,7 @@
 | 项 | 结果 |
 |---|---|
 | engine 0→9 | fetch→separate→select→clean→dataset→train(100步)→convert→mix→qa→export 全 done |
-| 智选排除 | 对唱样本 male 24% > 15% 被排除；短素材 <60s 被排除 |
+| 智选排除 | 对唱样本（低/高区双峰）被排除；短素材 <60s 被排除；男声素材在 voice=male 下保留 |
 | 训练 | Applio 真训练 100 步，产出 model.pth + index，幂等复跑 skipped |
 | 换声 | 旧版 RVC + rmvpe，65s 素材 15s 完成 |
 | 混音 | 0dB/0dB 原比例 + IR 混响 + 加宽 + glue + limiter |

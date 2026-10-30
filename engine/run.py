@@ -229,6 +229,10 @@ def cmd_init(args):
     options = config.get("options") if isinstance(config.get("options"), dict) else {}
     if isinstance(config.get("output"), dict) and config["output"].get("dir"):
         options.setdefault("outputDir", config["output"]["dir"])
+    voice = str(options.get("voice") or "auto").strip().lower()
+    if voice not in ("auto", "female", "male"):
+        return fail_json("BAD_VOICE", "options.voice 只能是 auto / female / male，收到：" + str(options.get("voice")))
+    options["voice"] = voice
 
     job_id = sanitize_id(config.get("id") or default_job_id(config, workdir))
     prev = None if args.reset else base.read_json(job_path, None)

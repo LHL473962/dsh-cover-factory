@@ -330,6 +330,28 @@ await step('装好后重新体检变绿：创建恢复，且缓存不锁死', as
   assert.equal(del.ok, true, JSON.stringify(del))
 })
 
+await step('voice：建 job 时写进 job_config.options.voice（默认 auto，male 透传）', async () => {
+  const auto = await call('cover_setup', {
+    singer: '声部默认', folder: MAT, target: TARGET, steps: 5000, mode: 'import',
+  })
+  assert.equal(auto.ok, true, JSON.stringify(auto).slice(0, 400))
+  assert.equal(auto.voice, 'auto')
+  const cfgAuto = JSON.parse(readFileSync(auto.config, 'utf8'))
+  assert.equal(cfgAuto.options.voice, 'auto')
+  await call('cover_delete', { jobId: auto.jobId, mode: 'purge' })
+
+  const male = await call('cover_setup', {
+    singer: '男歌手', folder: MAT, target: TARGET, steps: 5000, mode: 'import', voice: 'male',
+  })
+  assert.equal(male.ok, true, JSON.stringify(male).slice(0, 400))
+  assert.equal(male.voice, 'male')
+  assert.ok(String(male.voiceNote).includes('男声'), male.voiceNote)
+  const cfgMale = JSON.parse(readFileSync(male.config, 'utf8'))
+  assert.equal(cfgMale.options.voice, 'male', 'voice 要写进 job_config.options')
+  assert.ok('voiceGuess' in male.preview, 'preview 要有 voiceGuess 字段')
+  await call('cover_delete', { jobId: male.jobId, mode: 'purge' })
+})
+
 await step('refSearch：import + 版权确认后写进 job_config.options，refs 分类正确', async () => {
   const good = join(MAT, 'good1.wav')
   const r = await call('cover_setup', {

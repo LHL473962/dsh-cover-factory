@@ -98,6 +98,20 @@ def spectral_centroid(x, sr, frame_sec=0.046, hop_sec=0.023):
     return {"median_hz": round(float(np.median(c)), 1), "weighted_hz": round(float((c * w).sum() / w.sum()), 1)}
 
 
+def band_stats(f0, lo, hi, total=None):
+    """F0 落在 [lo,hi) 的帧占比与中位；total 默认为有效发声帧数。"""
+    v = np.asarray(f0, dtype=np.float64)
+    v = v[np.isfinite(v) & (v > 0)]
+    n = int(total) if total is not None else int(len(v))
+    sel = v[(v >= float(lo)) & (v < float(hi))]
+    return {
+        "share": round(float(len(sel)) / n, 4) if n else 0.0,
+        "median": round(float(np.median(sel)), 2) if len(sel) else None,
+        "frames": int(len(sel)),
+        "total": n,
+    }
+
+
 def stereo_corr(stereo):
     a = np.asarray(stereo, dtype=np.float64)
     if a.ndim != 2 or a.shape[1] < 2 or a.shape[0] < 16:

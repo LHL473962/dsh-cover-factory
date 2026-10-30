@@ -115,7 +115,7 @@ window.__ModuleLoader__.load({
       const [jobs, setJobs] = React.useState([])
       const [msg, setMsg] = React.useState('')
       const [busy, setBusy] = React.useState('')
-      const [form, setForm] = React.useState({ singer: '', folder: '', target: '', refs: '', steps: 9000, mode: 'import', copyrightAck: false, refSearch: false })
+      const [form, setForm] = React.useState({ singer: '', folder: '', target: '', refs: '', steps: 9000, mode: 'import', copyrightAck: false, refSearch: false, voice: 'auto' })
       // 风险提示默认收起
       const [riskOpen, setRiskOpen] = React.useState(false)
       // 依赖体检：doctor 为 {ok, health, checks, missing, hints, message}
@@ -240,6 +240,7 @@ window.__ModuleLoader__.load({
           refs: refLines,
         }
         if (form.mode === 'import') body.folder = form.folder
+        body.voice = form.voice || 'auto'
         body.refSearch = !!form.refSearch
         // auto 抓取一直需要确认；import 只有要联网搜好球曲时才需要
         if (form.mode === 'auto' || form.refSearch) body.copyrightAck = !!form.copyrightAck
@@ -249,7 +250,17 @@ window.__ModuleLoader__.load({
             const lines = (d.warnings || []).map((w) => '· ' + w)
             setMsg('需要二次确认，本次没有建 job：\n' + lines.join('\n') + '\n' + (d.next || ''))
           } else if (d.ok) {
-            setMsg('已建 job：' + d.jobId + '（' + (d.eta || '') + '）' + (d.preview && d.preview.reason === 'stems-pending' ? '\n素材预览要等 fetch/separate 跑完。' : ''))
+            // 预筛预览里若有逐首声部判断，直接列出来（看出为什么被排除）
+            let extra = ''
+            const vg = d.preview && d.preview.voiceGuess
+            if (vg && Array.isArray(vg.songs) && vg.songs.length) {
+              const rows = vg.songs.slice(0, 8).map((s) =>
+                '· ' + s.name + '：' + (s.voice || '未判断') + (s.kept ? '（保留）' : '（排除' + (s.reason ? '：' + s.reason : '') + '）'))
+              extra = '\n期望声部：' + (vg.expected || d.voice || 'auto') + (vg.target ? '；目标曲判断：' + vg.target : '') + '\n' + rows.join('\n')
+            } else if (d.preview && d.preview.reason === 'stems-pending') {
+              extra = '\n素材预览要等 fetch/separate 跑完；届时 select/report.json 里能看到每首的声部判断。'
+            }
+            setMsg('已建 job：' + d.jobId + '（' + (d.eta || '') + '）' + extra)
             setForm(Object.assign({}, form, { singer: '', target: '' }))
             await reloadJobs()
           } else {
@@ -365,7 +376,7 @@ window.__ModuleLoader__.load({
           ),
           h('label', { style: S.check },
             h('input', { type: 'checkbox', checked: !!st.allowDuet, onChange: (e) => patch({ allowDuet: e.target.checked }) }),
-            h('span', null, '允许对唱/合唱素材过预筛（allowDuet）——默认排除男声帧占比 >15% 的素材'),
+            h('span', null, '允许对唱/合唱素材过预筛（allowDuet）——默认排除双声部混杂（低/高音区各占 20% 以上且中位比 >1.5）；与目标声部不符的素材也会被排除'),
           ),
           h('label', { style: S.check },
             h('input', { type: 'checkbox', checked: !!st.autoDownload, onChange: (e) => patch({ autoDownload: e.target.checked }) }),
@@ -443,6 +454,19 @@ window.__ModuleLoader__.load({
             h('select', { style: S.input, value: form.mode, onChange: (e) => setForm(Object.assign({}, form, { mode: e.target.value, copyrightAck: false })) },
               MODES.map((m) => h('option', { key: m[0], value: m[0] }, m[1])),
             ),
+          ),
+          h('div', { style: S.field },
+            h('label', { style: S.label }, '目标歌手声部'),
+            h('select', {
+              style: S.input,
+              value: form.voice || 'auto',
+              onChange: (e) => setForm(Object.assign({}, form, { voice: e.target.value })),
+            },
+              h('option', { value: 'auto' }, '自动（按目标曲判断）'),
+              h('option', { value: 'female' }, '女声'),
+              h('option', { value: 'male' }, '男声'),
+            ),
+            h('div', { style: S.hint }, '自动按目标曲人声判断；若素材被大量排除，请手动指定（男歌手建议直接选男声）。'),
           ),
           form.mode === 'import'
             ? h('div', { style: S.field },

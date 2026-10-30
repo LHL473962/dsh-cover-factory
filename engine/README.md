@@ -65,13 +65,24 @@ fetch 后 job.refs 归一成 [{input, kind, matched:'local'|'search'|false, matc
 全部没命中等于没填 refs（按默认权重）。dataset 只训练命中的好球曲（有命中时），权重 ×6 不变。
 select/dataset/train 的素材列表通过 stages/base.songs() 读（job.songs，兼容老 job 的 job.refs）。
 
+## 智选：性别 / 对唱判断（options.voice）
+
+- `options.voice`：`auto`（默认）/ `female` / `male`；init 会校验，非法值返回 `BAD_VOICE`。
+- 逐帧 F0 分**低区 60–165Hz / 高区 165–500Hz**；两区帧占比都 ≥20% 且高区中位 / 低区中位 > 1.5 → 对唱/合唱（`--allow-duet` 可放行）。
+- 单一声部：某一区占比 ≥80% → 不会被误判成对唱。
+- `expected`：voice 非 auto 时直接用；auto 时取目标曲人声中位（<200Hz→male，否则 female），目标曲不可用取素材多数。
+- 排除规则 = 与 expected 不符：expected=male 时，中位>200Hz 且低区<20%（高区主导）的歌排除；expected=female 反之。**不再无条件排除男声**。
+- select 报告每首含 `medianF0 / lowShare / highShare / bimodal / voiceGuess(male|female|mixed) / used / reason`；顶层含 `expectedVoice/expectedSource/bands`。
+  `job.json` 记录 `options.voice`、`select_report` 与 `expectedVoice`。
+- qa 的音域覆盖按 expected 宽区间算：male 80–400Hz、female 150–600Hz（`qa.voice_ranges` 可改）。
+
 ## stage 状态
 
 | stage | 实现 | 真实可跑 | 说明 |
 | --- | --- | --- | --- |
 | fetch | done | ✅ import + search | import 只复制/转码用户文件夹；search 走 B 站搜索 + yt-dlp（需 --copyright-ack） |
 | separate | done | ✅ | MSST mel_band_roformer + kim 权重 |
-| select | done | ✅ | 对唱排除、现场降权、音色聚类加权 |
+| select | done | ✅ | 双峰对唱判断、按 expected 声部排除、现场降权、音色聚类加权 |
 | clean | done | ✅ | 高通 45Hz + 掐头去尾静音 |
 | dataset | done | ✅ | 训练集目录 + manifest（音域 p5/p95） |
 | train | done | ✅ | Applio dsh_rvc2.py prep/train，断点续训 |

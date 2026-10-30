@@ -1,0 +1,203 @@
+{
+  "version": 2,
+  "generatedAt": "2026-10-30T21:05:05+08:00",
+  "jobId": "job_male",
+  "voiceInput": "male",
+  "expectedVoice": "male",
+  "expectedSource": "options.voice",
+  "bands": {
+    "low": [
+      60.0,
+      165.0
+    ],
+    "high": [
+      165.0,
+      500.0
+    ],
+    "bimodalShare": 0.2,
+    "bimodalRatio": 1.5,
+    "singleVoiceShare": 0.8,
+    "voiceMedianSplit": 200.0
+  },
+  "allowDuet": false,
+  "rules": {
+    "bimodal_share": 0.2,
+    "bimodal_ratio": 1.5,
+    "single_voice_share": 0.8,
+    "voice_median_split": 200.0,
+    "stereo_corr_min": 0.3,
+    "min_duration_sec": 0.5,
+    "ref_weight": 6.0,
+    "outlier_weight": 3.0,
+    "target_weight": 1.0
+  },
+  "songs": [
+    {
+      "id": "ref_01",
+      "name": "duet",
+      "role": "ref",
+      "file": "work/raw/ref_01_duet.wav",
+      "vocals": "work/stems/ref_01_duet/vocals.wav",
+      "instrumental": "work/stems/ref_01_duet/instrumental.wav",
+      "duration_sec": 5.0,
+      "medianF0": 111.11,
+      "median_f0": 111.11,
+      "lowShare": 0.5049,
+      "highShare": 0.4951,
+      "lowMedian": 110.34,
+      "highMedian": 333.33,
+      "bandRatio": 3.02,
+      "bimodal": true,
+      "voiceGuess": "mixed",
+      "singleVoice": false,
+      "male_ratio": 0.5049,
+      "f0_p5": 110.34,
+      "f0_p95": 166.67,
+      "voiced_frames": 309,
+      "frames": 309,
+      "stereo_corr": 1.0,
+      "centroid_hz": 242.9,
+      "weight": 0.0,
+      "kept": false,
+      "used": false,
+      "status": "excluded",
+      "reason": "对唱/合唱：低区 50% / 高区 50%（中位比 3.02）",
+      "reasons": [
+        "对唱/合唱：低区 50% / 高区 50%（中位比 3.02）"
+      ],
+      "cluster": false
+    },
+    {
+      "id": "ref_02",
+      "name": "female",
+      "role": "ref",
+      "file": "work/raw/ref_02_female.wav",
+      "vocals": "work/stems/ref_02_female/vocals.wav",
+      "instrumental": "work/stems/ref_02_female/instrumental.wav",
+      "duration_sec": 229.99,
+      "medianF0": 296.3,
+      "median_f0": 296.3,
+      "lowShare": 0.0061,
+      "highShare": 0.9052,
+      "lowMedian": 146.79,
+      "highMedian": 296.3,
+      "bandRatio": 2.02,
+      "bimodal": false,
+      "voiceGuess": "female",
+      "singleVoice": true,
+      "male_ratio": 0.0061,
+      "f0_p5": 228.57,
+      "f0_p95": 500.0,
+      "voiced_frames": 9619,
+      "frames": 14371,
+      "stereo_corr": 0.9999,
+      "centroid_hz": 1921.2,
+      "weight": 0.0,
+      "kept": false,
+      "used": false,
+      "status": "excluded",
+      "reason": "与期望声部 male 不符：高区主导（中位 296Hz，低区 1%）",
+      "reasons": [
+        "与期望声部 male 不符：高区主导（中位 296Hz，低区 1%）"
+      ],
+      "cluster": false
+    },
+    {
+      "id": "ref_03",
+      "name": "male",
+      "role": "ref",
+      "file": "work/raw/ref_03_male.wav",
+      "vocals": "work/stems/ref_03_male/vocals.wav",
+      "instrumental": "work/stems/ref_03_male/instrumental.wav",
+      "duration_sec": 5.0,
+      "medianF0": 110.34,
+      "median_f0": 110.34,
+      "lowShare": 1.0,
+      "highShare": 0.0,
+      "lowMedian": 110.34,
+      "highMedian": null,
+      "bandRatio": null,
+      "bimodal": false,
+      "voiceGuess": "male",
+      "singleVoice": true,
+      "male_ratio": 1.0,
+      "f0_p5": 110.34,
+      "f0_p95": 111.11,
+      "voiced_frames": 309,
+      "frames": 309,
+      "stereo_corr": 1.0,
+      "centroid_hz": 112.6,
+      "weight": 6.0,
+      "kept": true,
+      "used": true,
+      "status": "kept",
+      "reason": "",
+      "reasons": [],
+      "cluster": true
+    },
+    {
+      "id": "target",
+      "name": "target",
+      "role": "target",
+      "file": "work/raw/target_target.wav",
+      "vocals": "work/stems/target_target/vocals.wav",
+      "instrumental": "work/stems/target_target/instrumental.wav",
+      "duration_sec": 5.0,
+      "medianF0": 333.33,
+      "median_f0": 333.33,
+      "lowShare": 0.0,
+      "highShare": 1.0,
+      "lowMedian": null,
+      "highMedian": 333.33,
+      "bandRatio": null,
+      "bimodal": false,
+      "voiceGuess": "female",
+      "singleVoice": true,
+      "male_ratio": 0.0,
+      "f0_p5": 333.33,
+      "f0_p95": 333.33,
+      "voiced_frames": 309,
+      "frames": 309,
+      "stereo_corr": 1.0,
+      "centroid_hz": 329.4,
+      "weight": 1.0,
+      "kept": true,
+      "used": true,
+      "status": "kept",
+      "reason": "",
+      "reasons": [],
+      "cluster": false
+    }
+  ],
+  "selected": [
+    "ref_03"
+  ],
+  "excluded": [
+    {
+      "id": "ref_01",
+      "name": "duet",
+      "reason": "对唱/合唱：低区 50% / 高区 50%（中位比 3.02）"
+    },
+    {
+      "id": "ref_02",
+      "name": "female",
+      "reason": "与期望声部 male 不符：高区主导（中位 296Hz，低区 1%）"
+    }
+  ],
+  "target": "target",
+  "cluster": {
+    "median_f0": 110.34,
+    "median_centroid_hz": 112.6,
+    "members": [
+      "ref_03"
+    ],
+    "size": 1
+  },
+  "counts": {
+    "songs": 4,
+    "refs": 3,
+    "kept": 1,
+    "excluded": 2,
+    "expectedVoice": "male"
+  }
+}

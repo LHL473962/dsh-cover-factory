@@ -54,9 +54,12 @@
     "timeout_sec": 7200
   },
   "select": {
-    "male_lo": 60.0,
-    "male_hi": 165.0,
-    "duet_male_ratio": 0.15,
+    "low_band": [60.0, 165.0],
+    "high_band": [165.0, 500.0],
+    "bimodal_share": 0.2,
+    "bimodal_ratio": 1.5,
+    "single_voice_share": 0.8,
+    "voice_median_split": 200.0,
     "stereo_corr_min": 0.3,
     "min_duration_sec": 60.0,
     "ref_weight": 6.0,
@@ -137,6 +140,7 @@
     "min_duration_sec": 30.0,
     "range_semitones": 6.0,
     "range_coverage": 0.7,
+    "voice_ranges": { "male": [80, 400], "female": [150, 600] },
     "timeout_sec": 900
   },
   "export": {

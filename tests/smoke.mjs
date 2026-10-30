@@ -48,7 +48,7 @@ const ctx = {
 }
 
 import { doctorBlockCreate, normalizeDoctor, normalizeTorchSuggestion } from '../lib/doctor.js'
-import { buildJobConfig, classifyRefs, etaText } from '../lib/tools.js'
+import { buildJobConfig, classifyRefs, etaText, summarizeSelectReport } from '../lib/tools.js'
 import { isAlive } from '../lib/util.js'
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
@@ -267,6 +267,55 @@ await check('refSearch=true 但没版权确认 -> needsConfirm，不建 job', as
 await check('refSearch=true + copyrightAck=true -> 过闸（引擎缺失时停在 ENGINE_NOT_READY）', async () => {
   const r = await call('cover_setup', { singer: '测试', folder: HOME, refs: ['某首歌名'], refSearch: true, copyrightAck: true })
   assert.equal(r.error, 'ENGINE_NOT_READY', JSON.stringify(r))
+})
+
+await check('voice：默认 auto，male/female 合法并透传 options.voice', () => {
+  const b = { singer: '测试', mode: 'import', folder: 'F', steps: 9000, shift: 0, outputDir: 'O' }
+  assert.equal(buildJobConfig(b).options.voice, 'auto', '默认应该是 auto')
+  assert.equal(buildJobConfig({ ...b, voice: 'male' }).options.voice, 'male')
+  assert.equal(buildJobConfig({ ...b, voice: 'female' }).options.voice, 'female')
+  const schema = byName('cover_setup').parameters.properties.voice
+  assert.deepEqual(schema.enum, ['auto', 'female', 'male'])
+  assert.ok(schema.description.includes('男歌手'), '描述要提示男歌手选 male：' + schema.description)
+  assert.equal(byName('cover_setup').parameters.required.includes('voice'), false)
+})
+
+await check('voice：非法值 -> BAD_VOICE（不建 job）', async () => {
+  const r = await call('cover_setup', { singer: '测试', folder: HOME, voice: 'robot' })
+  assert.equal(r.ok, false, JSON.stringify(r))
+  assert.equal(r.error, 'BAD_VOICE')
+  assert.ok(String(r.message).includes('male'), r.message)
+  assert.ok(!/[A-Za-z]:[\\/]/.test(r.message), 'message 泄漏路径：' + r.message)
+})
+
+await check('voice：male/female 合法（引擎缺失时停在 ENGINE_NOT_READY）', async () => {
+  for (const voice of ['male', 'female', 'auto', '男']) {
+    const r = await call('cover_setup', { singer: '测试', folder: HOME, voice })
+    assert.notEqual(r.error, 'BAD_VOICE', voice + ' 被误判：' + r.message)
+    assert.equal(r.error, 'ENGINE_NOT_READY', voice + ' -> ' + JSON.stringify(r))
+  }
+})
+
+await check('voiceGuess：从 select/report.json 提取每首声部判断与排除原因', () => {
+  const s = summarizeSelectReport({
+    voiceGuess: 'female',
+    items: [
+      { file: 'a.wav', kept: true, voice: 'female' },
+      { file: 'b.wav', kept: false, voice: 'male', reason: '声部不符（期望 female）' },
+      { file: 'c.wav', kept: false, reason: '男声区帧 38% > 15%（疑似对唱）' },
+    ],
+  }, 'female')
+  assert.equal(s.voiceGuess.expected, 'female')
+  assert.equal(s.voiceGuess.target, 'female')
+  assert.equal(s.voiceGuess.songs.length, 3)
+  assert.deepEqual(s.voiceGuess.songs.map((x) => x.voice), ['female', 'male', null])
+  assert.equal(s.keptCount, 1)
+  assert.equal(s.excludedCount, 2)
+  assert.equal(s.excluded[0].voice, 'male')
+  // 没有声部信息时也不崩
+  const empty = summarizeSelectReport({ items: [{ file: 'x.wav', kept: true }] }, 'auto')
+  assert.equal(empty.voiceGuess.expected, 'auto')
+  assert.equal(empty.voiceGuess.songs[0].voice, null)
 })
 
 await check('refSearch：确认后 job 配置写 options.refSearch=true（import 同时写 copyrightAck）', () => {

@@ -40,12 +40,31 @@ def run(job, cfg):
     manifest_path = os.path.join(ds_dir, "manifest.json")
     manifest = base.read_json(manifest_path, {}) or {}
 
+    # 期望声部：options.voice > select 的 expectedVoice > dataset 中位；音域用宽区间
+    voice_opt = str(opts.get("voice") or "auto").strip().lower()
+    sel_rep = base.read_json(base.work(job, "select", "report.json"), {}) or {}
+    if voice_opt in ("male", "female"):
+        expected_voice, expected_source = voice_opt, "options.voice"
+    elif sel_rep.get("expectedVoice") in ("male", "female"):
+        expected_voice, expected_source = sel_rep.get("expectedVoice"), "select"
+    else:
+        median = (manifest.get("pitch_range") or {}).get("median")
+        if median:
+            expected_voice = "male" if float(median) < 200.0 else "female"
+            expected_source = "dataset"
+        else:
+            expected_voice, expected_source = "female", "default"
+    voice_ranges = qcfg.get("voice_ranges") or {}
+    voice_range = voice_ranges.get(expected_voice) or ([80, 400] if expected_voice == "male" else [150, 600])
+
     report_path = base.work(job, "qa", "report.json")
     md_path = base.work(job, "qa", "report.md")
     params = {
         "thresholds": qcfg,
         "shift": shift,
         "pitchRange": (manifest.get("pitch_range") or {}),
+        "expectedVoice": expected_voice,
+        "voiceRange": list(voice_range),
     }
     inputs = [mix]
     if base.file_ok(target_vocals):
@@ -116,33 +135,22 @@ def run(job, cfg):
         suggestions.append("加训练步数（当前 steps=%s）/ 换更干净的素材" % opts.get("steps"))
 
     pitch_range = manifest.get("pitch_range") or {}
-    lo = pitch_range.get("lo")
-    hi = pitch_range.get("hi")
     coverage = None
     target_f0_summary = {}
-    if base.file_ok(target_vocals) and lo and hi:
-        tf0 = analysis.f0_track(audio.decode(ff, target_vocals, 16000, 1, timeout=timeout), 16000)
-        coverage = analysis.range_coverage(tf0, lo, hi, semis)
+    if base.file_ok(target_vocals) and len(voice_range) >= 2:
+        tf0 = analysis.f0_track(audio.decode(ff, target_vocals, 16000, 1, timeout=timeout),
+                                16000, fmin=60.0)
+        coverage = analysis.range_coverage(tf0, voice_range[0], voice_range[1], 0.0)
         target_f0_summary = analysis.f0_summary(tf0, male_lo=60.0, male_hi=165.0)
         checks["rangeCoverage"] = bool(coverage is not None and coverage >= cov_min)
         if not checks["rangeCoverage"]:
-            problems.append("音域覆盖 %.0f%% < %.0f%%（训练音域 %.1f-%.1fHz）" % (
-                (coverage or 0) * 100, cov_min * 100, float(lo), float(hi)))
-            # 建议一个能落进甜区的整首移调
-            med = target_f0_summary.get("median")
-            if med:
-                import math
-                need = int(round(12.0 * math.log(float(med) / float(pitch_range.get("median") or med), 2)))
-                if -12 <= need <= 12:
-                    suggestions.append("整首移调 shift=%+d（人声+伴奏同比例）或增加素材/步数" % need)
-                else:
-                    suggestions.append("目标音域偏离训练音域 %+d 半音，超出 ±12 的整首移调范围：建议换素材/重训" % need)
-            else:
-                suggestions.append("整首移调或增加素材/步数")
+            problems.append("音域覆盖 %.0f%% < %.0f%%（期望声部 %s 区间 %g-%gHz）" % (
+                (coverage or 0) * 100, cov_min * 100, expected_voice, voice_range[0], voice_range[1]))
+            suggestions.append("目标音域偏离期望声部区间：整首移调（人声+伴奏同比例）或换素材/重训")
     else:
         checks["rangeCoverage"] = False if base.file_ok(target_vocals) else None
-        problems.append("音域覆盖未测：缺少训练音域（dataset manifest）或目标人声 stem")
-        suggestions.append("先确认 dataset/clean 已产出、目标曲人声 stem 存在")
+        problems.append("音域覆盖未测：缺少目标人声 stem 或期望音域配置")
+        suggestions.append("确认目标曲人声 stem 存在、qa.voice_ranges 配置有效")
 
     ok = all(v is not False for v in checks.values())
     metrics = {
@@ -154,6 +162,9 @@ def run(job, cfg):
         "gapPerMin": gaps.get("per_min"),
         "rangeCoverage": coverage,
         "shift": shift,
+        "expectedVoice": expected_voice,
+        "expectedSource": expected_source,
+        "expectedRange": [voice_range[0], voice_range[1]],
         "pitchRange": pitch_range,
         "targetMedianF0": target_f0_summary.get("median"),
         "problems": problems,
@@ -171,6 +182,7 @@ def run(job, cfg):
             "loudnessTarget": target_lufs, "loudnessTol": tol, "peakMaxDb": peak_max,
             "gapPerMin": gap_limit, "minDurationSec": min_dur,
             "rangeCoverage": cov_min, "rangeSemitones": semis,
+            "expectedVoice": expected_voice, "expectedRange": [voice_range[0], voice_range[1]],
         },
         "problems": problems,
         "suggestions": suggestions,
