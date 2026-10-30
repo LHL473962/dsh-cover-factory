@@ -15,6 +15,7 @@ import sys
 
 ENGINE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_CONFIG = os.path.join(ENGINE_DIR, "config_default.json")
+LOCAL_CONFIG = os.path.join(ENGINE_DIR, "config.local.json")
 
 
 def read_json(path, default=None):
@@ -35,7 +36,11 @@ def deep_merge(dst, src):
 
 
 def load_config(override_path=None):
+    """默认配置 -> engine/config.local.json（可选，本机覆盖）-> --config 覆盖。"""
     cfg = read_json(DEFAULT_CONFIG, {}) or {}
+    local = read_json(LOCAL_CONFIG, None)
+    if isinstance(local, dict):
+        deep_merge(cfg, local)
     if override_path:
         over = read_json(override_path, None)
         if isinstance(over, dict):

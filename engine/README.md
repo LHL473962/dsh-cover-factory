@@ -106,6 +106,9 @@ fetch 的 search 模式已实现（v0.2，见下方“抓取模式”）；impor
 
 ## 默认外部路径（config_default.json 可改）
 
+- **本机绝对路径不要写进 `config_default.json`**：放到 `engine/config.local.json`（已加入 `.gitignore`）。
+  加载顺序：`config_default.json` → `config.local.json`（可选，深度合并）→ `--config` / `job.config`（覆盖前者）。
+  本机的 yt-dlp / ncmdump / 其它解释器路径都写在 config.local.json，公开默认值保持干净（不含用户名路径）。
 - MSST：`D:/Apps/MSST/01_人声分离_MSST-GUI`（env/python.exe + kim ckpt）
 - Applio：`D:/Apps/_dl/applio/Applio-main`（applio-env/Scripts/python.exe）
 - 旧版 RVC：`D:/Apps/_dl/old_rvc/rvc`（rvc-env/python.exe；模型目录走 weight_root 环境变量）
@@ -126,6 +129,25 @@ job 配置（init 的 sources 字段）：
 - 产物：`work/raw/ref_XX_<bvid>_<标题>.wav` + `work/raw/fetch_report.json`（bvid/标题/作者/时长/是否采用/原因/本地路径）。
 - **版权**：抓取会联网下载第三方音频，版权风险由使用者承担；未加 `--copyright-ack`（或 `options.copyrightAck!=true`）时引擎直接退出码 2。
 - 网络异常不中断：搜索失败写报告 + failed 原因；下载失败逐条记录后继续。
+
+## 本机音乐客户端（sources.local_clients）
+
+    {"sources": {"local_clients": true, "clients": ["netease", "qqmusic", "kugou", "kuwo"], "keyword": "suis", "days": 0}}
+
+- 扫描（目录存在才扫；递归深度≤3，单目录≤2000 文件，跳过 >200MB）：
+  - 网易云：`%USERPROFILE%/Music/CloudMusic`、各盘符 `/CloudMusic`、`/CloudMusic/VipSongsDownload`
+  - QQ音乐：`%USERPROFILE%/Music/QQMusic`、各盘符 `/QQMusic`
+  - 酷狗：`%USERPROFILE%/Music/KuGou`、各盘符 `/KuGou`
+  - 酷我：`%USERPROFILE%/Music/Kuwo`
+  - 其它软件：`fetch.local_client_dirs` 里加 `[{"path": "...", "client": "other"}]`
+- 格式：`ncm` 自动用 ncmdump 解密（`paths.ncmdump_python` → fallbacks 探测，本机 `D:/Apps/Python311` 可用）；
+  `mp3/flac/wav/m4a` 直接转 44.1k stereo；`qmc*/kgm*/mflac/mgg/kwm` **不解密**，只记 detected + warning，不中断。
+- 过滤：有 `keyword` 或 `singer` 就只取文件名包含关键词的（不区分大小写）；否则取全部（`limit` 默认 20）。
+  `days>0` 只看最近 N 天（0 = 不按时间过滤）。
+- 报告：`work/raw/local_client_report.json`（file / client / format / used / reason）。
+  `job.songs` 每个文件带 `client`（netease-client / qqmusic-client / …）、`sourcePath`、`format`；`job.local_client_report` 记报告路径。
+- **只读取，不修改**：不重命名、不删除、不往客户端目录写任何文件；解密产物写在 job 的 `work/raw/_ncm/`。
+- ncmdump 安装：`python -m pip install ncmdump`（解释器配 `paths.ncmdump_python`），或提供 `ncmdump.exe`。
 
 ## 声库缓存 / 复用
 

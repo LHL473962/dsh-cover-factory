@@ -8,6 +8,7 @@ sources 写法：
     {"folder": "D:/素材目录"}                                  # import
     {"search": "歌手名", "limit": 8, "author": "仅该作者"}      # search
     {"kind": "search", "query": "歌手名"}                      # 兼容插件旧字段
+    {"local_clients": true, "clients": ["netease"], "keyword": "suis"}  # 本机客户端已下载
 
 抓取前必须 options.copyrightAck=true（或 CLI --copyright-ack），否则 run.py 直接退 2。
 网络异常不中断：搜索超时 20s、重试 2 次；单条下载失败跳过并写进 work/raw/fetch_report.json。
@@ -265,6 +266,402 @@ def _songs_from_plan(job, plan):
     ]
     job["songs"] = songs
     return songs
+
+
+# ------------------------------------------------------------------ 本机音乐客户端
+
+CLIENT_LABELS = {"netease": "netease-client", "qqmusic": "qqmusic-client",
+                 "kugou": "kugou-client", "kuwo": "kuwo-client"}
+CLIENT_FORMATS = (".mp3", ".flac", ".wav", ".m4a")
+ENCRYPTED_SUFFIXES = (".qmc0", ".qmc2", ".qmc3", ".qmc4", ".qmc6", ".qmc8",
+                      ".qmcflac", ".qmcogg", ".kgm", ".kgma", ".kgg",
+                      ".mflac", ".mgg", ".kwm")
+_NCMDUMP_CACHE = {"py": None, "exe": None}
+
+
+def _is_local_clients(sources):
+    return isinstance(sources, dict) and bool(sources.get("local_clients"))
+
+
+def _windows_drives():
+    return [d for d in "CDEFGHIJKLMNOPQRSTUVWXYZ" if os.path.isdir(d + ":/")]
+
+
+def _client_roots(cfg, clients):
+    home = os.path.expanduser("~")
+    drives = _windows_drives()
+    roots = []
+
+    def add(path, client):
+        p = os.path.abspath(path)
+        if os.path.isdir(p):
+            roots.append((p, client))
+
+    for client in clients:
+        if client == "netease":
+            add(os.path.join(home, "Music", "CloudMusic"), client)
+            for d in drives:
+                add(os.path.join(d + ":/", "CloudMusic"), client)
+                add(os.path.join(d + ":/", "CloudMusic", "VipSongsDownload"), client)
+        elif client == "qqmusic":
+            add(os.path.join(home, "Music", "QQMusic"), client)
+            for d in drives:
+                add(os.path.join(d + ":/", "QQMusic"), client)
+        elif client == "kugou":
+            add(os.path.join(home, "Music", "KuGou"), client)
+            for d in drives:
+                add(os.path.join(d + ":/", "KuGou"), client)
+        elif client == "kuwo":
+            add(os.path.join(home, "Music", "Kuwo"), client)
+    # 兼容其它音乐软件：允许配置额外目录 [{"path": "...", "client": "other"}]
+    for extra in (cfg.get("fetch") or {}).get("local_client_dirs") or []:
+        if isinstance(extra, str):
+            add(extra, "custom")
+        elif isinstance(extra, dict) and extra.get("path"):
+            add(extra["path"], str(extra.get("client") or "custom"))
+    out = []
+    seen = set()
+    for path, client in roots:
+        key = os.path.normcase(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((path, client))
+    return out
+
+
+def _walk_limited(root, max_depth=3, max_files=2000):
+    root = os.path.abspath(root)
+    base_depth = root.rstrip("\\/").count(os.sep)
+    out = []
+    for cur, dirs, files in os.walk(root):
+        depth = cur.rstrip("\\/").count(os.sep) - base_depth
+        if depth >= max_depth:
+            dirs[:] = []
+        for name in sorted(files):
+            if len(out) >= max_files:
+                return out, True
+            out.append(os.path.join(cur, name))
+    return out, False
+
+
+def _client_format(path):
+    name = os.path.basename(path).lower()
+    ext = os.path.splitext(name)[1]
+    if ext == ".ncm":
+        return "ncm"
+    if ext in CLIENT_FORMATS:
+        return ext[1:]
+    if name.endswith(ENCRYPTED_SUFFIXES) or ext in ENCRYPTED_SUFFIXES:
+        if ext in (".kgm", ".kgma", ".kgg"):
+            return "kgm"
+        if ext.startswith(".qmc"):
+            return "qmc"
+        return ext[1:]
+    return ""
+
+
+def _candidate_pythons(cfg, key):
+    paths = cfg.get("paths") or {}
+    raw = [paths.get(key), paths.get("python")]
+    raw.extend(paths.get(key + "_fallbacks") or [])
+    out = []
+    for cand in raw:
+        if not cand:
+            continue
+        p = shutil.which(str(cand)) or (str(cand) if os.path.isfile(str(cand)) else "")
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
+def _resolve_ncmdump_python(cfg):
+    if _NCMDUMP_CACHE.get("py") is not None:
+        return _NCMDUMP_CACHE["py"]
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    for py in _candidate_pythons(cfg, "ncmdump_python"):
+        try:
+            proc = subprocess.run([py, "-c", "import ncmdump"], stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, timeout=60, creationflags=flags)
+            if proc.returncode == 0:
+                _NCMDUMP_CACHE["py"] = py
+                return py
+        except Exception:  # noqa: BLE001
+            continue
+    _NCMDUMP_CACHE["py"] = ""
+    return ""
+
+
+def _resolve_ncmdump_exe(cfg):
+    if _NCMDUMP_CACHE.get("exe") is not None:
+        return _NCMDUMP_CACHE["exe"]
+    for py in _candidate_pythons(cfg, "ncmdump_python"):
+        exe = os.path.join(os.path.dirname(py), "Scripts", "ncmdump.exe")
+        if os.path.isfile(exe):
+            _NCMDUMP_CACHE["exe"] = exe
+            return exe
+    exe = shutil.which("ncmdump") or ""
+    _NCMDUMP_CACHE["exe"] = exe
+    return exe
+
+
+def _decrypt_ncm(job, cfg, src):
+    fcfg = cfg.get("fetch") or {}
+    dec_dir = os.path.join(base.work(job, "raw"), "_ncm")
+    base.ensure_dir(dec_dir)
+    stem = _slug(os.path.splitext(os.path.basename(src))[0])
+    dst = os.path.join(dec_dir, stem + ".decoded")
+    try:
+        if base.file_ok(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+            return dst, ""
+    except OSError:
+        pass
+    timeout = float(fcfg.get("ncm_timeout_sec", 300))
+    py = _resolve_ncmdump_python(cfg)
+    if py:
+        script = "import sys;from ncmdump import dump;dump(sys.argv[1],sys.argv[2])"
+        res = base.run_cmd([py, "-c", script, src, dst], timeout=timeout)
+        if res["returncode"] == 0 and base.file_ok(dst):
+            return dst, ""
+        base.log("fetch: ncmdump python 解密失败，尝试 ncmdump.exe：%s" % (res.get("tail") or "")[-300:])
+    exe = _resolve_ncmdump_exe(cfg)
+    if exe:
+        before = set(os.listdir(dec_dir))
+        res = base.run_cmd([exe, "-o", dec_dir, src], timeout=timeout)
+        if res["returncode"] == 0:
+            for name in sorted(os.listdir(dec_dir)):
+                p = os.path.join(dec_dir, name)
+                if name not in before and os.path.isfile(p) and not name.endswith((".ncm", ".decoded")):
+                    return p, ""
+            for name in sorted(os.listdir(dec_dir)):
+                if name.lower().startswith(stem.lower()) and not name.endswith((".ncm", ".decoded")):
+                    return os.path.join(dec_dir, name), ""
+        return "", "ncmdump 解密失败：%s" % (res.get("tail") or "")[-300:]
+    return "", "找不到可用的 ncmdump（paths.ncmdump_python / fallbacks / ncmdump.exe）"
+
+
+def _local_client_song(ff, cfg, job, entry, index, raw_dir):
+    fmt = entry["format"]
+    src = entry["file"]
+    work_src = src
+    if fmt == "ncm":
+        work_src, why = _decrypt_ncm(job, cfg, src)
+        if not work_src:
+            return None, why
+    out = os.path.join(raw_dir, "ref_%02d_%s.wav" % (
+        index, _slug(os.path.splitext(os.path.basename(src))[0])[:40]))
+    sr = int((cfg.get("audio") or {}).get("sample_rate", 44100))
+    ch = int((cfg.get("audio") or {}).get("channels", 2))
+    audio.transcode(ff, work_src, out, sr=sr, channels=ch)
+    return out, ""
+
+
+def _run_local_clients(job, cfg, sources):
+    from assets import audio
+
+    fcfg = cfg.get("fetch") or {}
+    clients = sources.get("clients") or ["netease", "qqmusic", "kugou", "kuwo"]
+    if isinstance(clients, str):
+        clients = [clients]
+    clients = [str(c).lower() for c in clients if str(c).lower() in CLIENT_LABELS]
+    if not clients:
+        clients = ["netease", "qqmusic", "kugou", "kuwo"]
+    keyword = str(sources.get("keyword") or job.get("singer") or "").strip()
+    try:
+        days = float(sources.get("days") or 0)
+    except (TypeError, ValueError):
+        days = 0.0
+    limit = base.clamp_int(sources.get("limit") or 20, 1, 500, 20)
+    max_size = int(fcfg.get("local_client_max_size_mb", 200)) * 1024 * 1024
+    max_depth = int(fcfg.get("local_client_max_depth", 3))
+    max_files = int(fcfg.get("local_client_max_files", 2000))
+
+    roots = _client_roots(cfg, clients)
+    if not roots:
+        return base.result(
+            "failed", [], {},
+            error="没有找到常见音乐客户端下载目录（网易云/QQ音乐/酷狗/酷我）；也可以用 fetch.local_client_dirs 指定",
+        )
+
+    raw_dir = base.work(job, "raw")
+    base.ensure_dir(raw_dir)
+    report_path = os.path.join(raw_dir, "local_client_report.json")
+    entries = []
+    truncated_roots = []
+    seen = set()
+    for root, client in roots:
+        files, truncated = _walk_limited(root, max_depth=max_depth, max_files=max_files)
+        if truncated:
+            truncated_roots.append(root)
+        for path in files:
+            key = os.path.normcase(os.path.abspath(path))
+            if key in seen:
+                continue
+            seen.add(key)
+            fmt = _client_format(path)
+            if not fmt:
+                continue
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            item = {
+                "file": path,
+                "client": CLIENT_LABELS.get(client, client),
+                "format": fmt,
+                "used": False,
+                "reason": "",
+                "localPath": None,
+            }
+            if st.st_size > max_size:
+                item["reason"] = "文件 >%dMB，跳过" % int(max_size / 1024 / 1024)
+            elif days > 0 and st.st_mtime < time.time() - days * 86400:
+                item["reason"] = "超过 %g 天，跳过" % days
+            elif keyword and keyword.lower() not in os.path.basename(path).lower():
+                item["reason"] = "文件名不含关键词「%s」" % keyword
+            entries.append(item)
+
+    usable = [e for e in entries if not e["reason"] and e["format"] in ("ncm", "mp3", "flac", "wav", "m4a")]
+    encrypted = [e for e in entries if e["format"] in ("qmc", "kgm", "mflac", "mgg", "kwm")]
+
+    specs = _ref_specs(job)
+    pool = [{"path": e["file"], "names": _pool_names(e["file"])} for e in usable]
+    resolved, warnings = _resolve_refs(job, cfg, specs, pool, False, False)
+    matched = {_norm_path(e["matchedPath"]) for e in resolved if e.get("matched")}
+
+    chosen = []
+    for e in usable:
+        if _norm_path(e["file"]) in matched:
+            chosen.append(e)
+    if keyword:
+        for e in usable:
+            if e not in chosen:
+                chosen.append(e)
+        if len(chosen) > 200:
+            chosen = chosen[:200]
+    else:
+        for e in usable:
+            if len(chosen) >= limit:
+                break
+            if e not in chosen:
+                chosen.append(e)
+        for e in usable:
+            if e not in chosen and not e["reason"]:
+                e["reason"] = "超出 limit=%d" % limit
+
+    if encrypted:
+        names = [os.path.basename(e["file"]) for e in encrypted]
+        message = ("检测到加密格式 %d 个（%s）：需专用解密工具，建议在客户端里另存/手动转换；已跳过"
+                   % (len(names), "、".join(names[:5])))
+        warnings.append(message)
+        for e in encrypted:
+            e["reason"] = "加密格式需专用解密工具，建议在客户端里另存/手动转换"
+        for w in warnings:
+            base.log("fetch: WARNING " + w)
+
+    # 先写元数据（即使 recon 跳过，job 里也有来源）
+    source_to_out = {}
+    for i, e in enumerate(chosen, 1):
+        source_to_out[_norm_path(e["file"])] = os.path.join(
+            raw_dir, "ref_%02d_%s.wav" % (i, _slug(os.path.splitext(os.path.basename(e["file"]))[0])[:40]))
+    _attach_raw(job, resolved, source_to_out)
+    job["refs"] = resolved
+    job["warnings"] = warnings
+    job["local_client_report"] = base.rel(job, report_path)
+
+    params = {
+        "mode": "local_clients", "clients": clients, "keyword": keyword,
+        "days": days, "limit": limit, "refs": specs,
+        "roots": [os.path.normcase(p) for p, _ in roots],
+    }
+    inputs = [e["file"] for e in chosen]
+    outputs = [source_to_out[_norm_path(e["file"])] for e in chosen]
+
+    if base.recon(job, STAGE, inputs, params, [report_path] + outputs):
+        base.log("fetch: 本机客户端产物已存在且输入未变，跳过")
+        return base.result(
+            "skipped",
+            [base.rel(job, report_path)] + [base.rel(job, p) for p in outputs],
+            dict(base.prev_metrics(job, STAGE)),
+            reason="产物已存在且输入未变",
+        )
+
+    ff = audio.find_ffmpeg(cfg.get("paths"))
+    songs = []
+    song_by_source = {}
+    succeeded = []
+    for i, e in enumerate(chosen, 1):
+        try:
+            out, why = _local_client_song(ff, cfg, job, e, i, raw_dir)
+        except Exception as exc:  # noqa: BLE001
+            out, why = None, "处理失败：%s" % exc
+        if not out:
+            e["reason"] = why or "处理失败"
+            base.log("fetch: 跳过 %s：%s" % (os.path.basename(e["file"]), e["reason"]))
+            continue
+        e["used"] = True
+        e["localPath"] = base.rel(job, out)
+        song = {
+            "id": "ref_%02d" % i,
+            "name": os.path.splitext(os.path.basename(e["file"]))[0],
+            "role": "ref",
+            "kind": "local_client",
+            "path": e["localPath"],
+            "source": e["client"],
+            "sourcePath": e["file"],
+            "client": e["client"],
+            "format": e["format"],
+        }
+        songs.append(song)
+        song_by_source[_norm_path(e["file"])] = out
+        succeeded.append(out)
+
+    _attach_raw(job, resolved, song_by_source)
+    job["refs"] = resolved
+    job["songs"] = songs
+    target = _ensure_target(job, cfg, ff)
+
+    report = {
+        "version": 1,
+        "generatedAt": base.now_iso(),
+        "mode": "local_clients",
+        "clients": clients,
+        "keyword": keyword,
+        "days": days,
+        "limit": limit,
+        "roots": [{"path": p, "client": CLIENT_LABELS.get(c, c)} for p, c in roots],
+        "truncatedRoots": truncated_roots,
+        "maxDepth": max_depth,
+        "maxFilesPerRoot": max_files,
+        "maxSizeMb": int(max_size / 1024 / 1024),
+        "counts": {
+            "scanned": len(entries),
+            "usable": len(usable),
+            "used": len(songs),
+            "encrypted": len(encrypted),
+        },
+        "files": entries,
+        "params": params,
+    }
+    base.write_json(report_path, report)
+
+    if songs:
+        base.log("fetch: 本机客户端完成，采用 %d 个文件（扫描 %d，加密跳过 %d，目标曲 %s）" % (
+            len(songs), len(entries), len(encrypted), "有" if target else "无"))
+        return base.result(
+            "done",
+            [base.rel(job, report_path)] + [base.rel(job, p) for p in succeeded],
+            dict(report["counts"], mode="local_clients", target=bool(target),
+                 keyword=keyword, encrypted=len(encrypted)),
+            input_hash=base.sig(job, inputs, params),
+        )
+
+    reasons = "；".join("%s: %s" % (os.path.basename(e["file"]), e["reason"] or "未采用")
+                       for e in entries[:5])
+    return base.result(
+        "failed", [base.rel(job, report_path)], report["counts"],
+        error="本机客户端里没有可用的音频（扫描 %d 个格式文件）：%s" % (len(entries), reasons),
+    )
 
 
 # ------------------------------------------------------------------ import
@@ -836,6 +1233,8 @@ def _run_search(job, cfg, sources):
 
 def run(job, cfg):
     sources = job.get("sources") or {}
+    if _is_local_clients(sources):
+        return _run_local_clients(job, cfg, sources)
     if _is_search(sources):
         return _run_search(job, cfg, sources)
     if str(job.get("mode") or "import").lower() != "import":

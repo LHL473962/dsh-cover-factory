@@ -47,8 +47,6 @@
 
 看 `<jobId 工作目录>/work/select/report.json` 里每首的 `reason` 和 `voiceGuess`（`cover_setup` 的预筛预览也会带 `voiceGuess`，能直接看出「这首被判成什么声部、为什么排除」）。想放行对唱：把 `~/.dsh/cover-factory-settings.json` 的 `allowDuet` 设为 `true`，再 `cover_run({ jobId, from: "select", resume: true })`。代价是模型会学到两个人的混合音色。排除只影响训练集，**不会删除你的源文件**。
 
-看 `<jobId 工作目录>/work/select/report.json` 里每首的 `reason`。想放行对唱：把 `~/.dsh/cover-factory-settings.json` 的 `allowDuet` 设为 `true`，再 `cover_run({ jobId, from: "select", resume: true })`。代价是模型会学到两个人的混合音色。排除只影响训练集，**不会删除你的源文件**。
-
 ## Q6. 抓取模式合法吗？会不会自动去下载？
 
 默认关闭。`autoDownload` 默认 `false`；直接 `cover_setup({ mode: "auto" })` 会返回 `DOWNLOAD_NOT_ENABLED`。插件**不内置、不分发任何音源**。
@@ -248,6 +246,18 @@ v0.1 **不做和声生成，也不做声部分离**。
 3. `voice` 默认 `auto`：用**目标曲人声**的 F0 自动判断期望声部。判断错了（例如目标曲是男声清唱却被判成女声）就显式指定 `cover_setup({ voice: "male" })`。
 
 怎么核对：`cover_setup` 返回的 `preview.voiceGuess`、或 `select/report.json` 里每首的 `voice` + `reason`。界面上新建任务卡片的「目标歌手声部」下拉就是传这个参数；非法值返回 `BAD_VOICE`（只认 `auto` / `female` / `male`）。
+
+## Q26. 能直接用网易云 / QQ音乐里下载好的歌吗？
+
+能。建 job 时把 `mode` 设成 `local`（界面：「本机客户端已下载」）：
+
+- **只读本地已下载的文件**：插件/引擎扫描客户端常见下载目录，不联网、**不需要账号、不需要登录态**，也不修改原文件。
+- 可选 `clients`（`netease` / `qqmusic` / `kugou` / `kuwo`，默认全部；`"qq"` 也认，会归一成 `qqmusic`）和 `keyword`（默认 = 歌手名）。
+- 常见格式都认；**ncm 会自动解密**；`qmc` / `kgm` 等加密格式需要你先手动转成 wav/flac/mp3。
+- 写进 job 配置的是 `mode: "import"` + `sources: { local_clients: true, clients: [...], keyword: "..." }`（引擎靠 `sources.local_clients` 识别，`mode` 只认 import/auto）；非法客户端名返回 `BAD_CLIENT`（会列出可选项）。
+- 跑起来后，`cover_setup` 的预筛预览里 `localFetch` 会给出**扫描到的文件数**与**格式分布**（`fileCount` / `formats`）；fetch 还没跑时是 `fetch-pending`。
+
+想更可控就同时给 `refs`（歌名/路径都行）；只想用 QQ音乐 就传 `clients: ["qqmusic"]`。
 
 ## 附录：硬件与风险（训练期间必看）
 

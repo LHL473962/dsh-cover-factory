@@ -123,7 +123,7 @@ await check('必填参数声明正确', () => {
     assert.deepEqual(byName(n).parameters.required, ['jobId'], n + ' required')
   }
   assert.equal(byName('cover_list').parameters.required, undefined)
-  assert.deepEqual(byName('cover_setup').parameters.properties.mode.enum, ['import', 'auto'])
+  assert.deepEqual(byName('cover_setup').parameters.properties.mode.enum, ['import', 'local', 'auto'])
   assert.equal(byName('cover_setup').parameters.properties.steps.type, 'number')
   assert.equal(byName('cover_setup').parameters.properties.shift.type, 'number')
   assert.equal(byName('cover_setup').parameters.properties.shift.enum, undefined, 'shift 的范围由校验兜，不靠 enum')
@@ -267,6 +267,41 @@ await check('refSearch=true 但没版权确认 -> needsConfirm，不建 job', as
 await check('refSearch=true + copyrightAck=true -> 过闸（引擎缺失时停在 ENGINE_NOT_READY）', async () => {
   const r = await call('cover_setup', { singer: '测试', folder: HOME, refs: ['某首歌名'], refSearch: true, copyrightAck: true })
   assert.equal(r.error, 'ENGINE_NOT_READY', JSON.stringify(r))
+})
+
+await check('mode=local：合法（不需要 folder），config.sources 写 {local_clients:true, clients, keyword}', async () => {
+  const r = await call('cover_setup', { singer: '测试', mode: 'local', steps: 5000 })
+  assert.equal(r.ok, false, JSON.stringify(r))
+  assert.equal(r.error, 'ENGINE_NOT_READY', 'local 模式不该要求 folder：' + JSON.stringify(r))
+  const b = { singer: '周杰伦', mode: 'local', steps: 9000, shift: 0, outputDir: 'O', refs: [] }
+  const c = buildJobConfig(b)
+  // 引擎只认 mode=import/auto，本机客户端靠 sources.local_clients 识别
+  assert.equal(c.mode, 'import', '落盘时 mode 要写成引擎认的 import')
+  assert.equal(c.sources.local_clients, true)
+  assert.deepEqual(c.sources.clients, ['netease', 'qqmusic', 'kugou', 'kuwo'], '默认全部客户端（id 对齐引擎）')
+  assert.equal(c.sources.keyword, '周杰伦', 'keyword 默认取 singer')
+  const picked = buildJobConfig({ ...b, clients: ['netease', 'qq'], keyword: '稻香' })
+  assert.deepEqual(picked.sources.clients, ['netease', 'qqmusic'], "'qq' 是别名，落盘统一成 qqmusic")
+  assert.equal(picked.sources.keyword, '稻香')
+  const schema = byName('cover_setup').parameters.properties
+  assert.ok(schema.mode.enum.includes('local'))
+  assert.deepEqual(schema.clients.items.enum, ['netease', 'qqmusic', 'kugou', 'kuwo'])
+})
+
+await check('mode=local：非法客户端名 -> BAD_CLIENT（列出可选项）', async () => {
+  const r = await call('cover_setup', { singer: '测试', mode: 'local', clients: ['netease', 'spotify'] })
+  assert.equal(r.ok, false, JSON.stringify(r))
+  assert.equal(r.error, 'BAD_CLIENT')
+  assert.ok(String(r.message).includes('spotify'), r.message)
+  assert.ok(String(r.message).includes('netease'), r.message)
+  assert.deepEqual(r.bad, ['spotify'])
+  assert.deepEqual(r.allowed, ['netease', 'qqmusic', 'kugou', 'kuwo'])
+  assert.ok(!/[A-Za-z]:[\\/]/.test(r.message), 'message 泄漏路径：' + r.message)
+})
+
+await check('mode=local：中文客户端名与去重也认', () => {
+  const c = buildJobConfig({ singer: '测试', mode: 'local', clients: ['网易云', 'QQ音乐', 'netease'] })
+  assert.deepEqual(c.sources.clients, ['netease', 'qqmusic'], '中文别名归一 + 去重')
 })
 
 await check('voice：默认 auto，male/female 合法并透传 options.voice', () => {

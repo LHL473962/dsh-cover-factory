@@ -20,6 +20,8 @@
     "export_dir": "",
     "ytdlp_python": "python",
     "ytdlp_python_fallbacks": [],
+    "ncmdump_python": "",
+    "ncmdump_python_fallbacks": [],
     "bankDir": "<DATA_DIR>/house/banks/",
     "nvidia_smi": "",
     "msst_inference": "",
@@ -43,7 +45,12 @@
     "default_limit": 8,
     "min_duration_sec": 60,
     "max_duration_sec": 480,
-    "exclude_title_keywords": ["伴奏", "off vocal", "offvocal", "instrumental", "inst", "カラオケ", "karaoke"]
+    "exclude_title_keywords": ["伴奏", "off vocal", "offvocal", "instrumental", "inst", "カラオケ", "karaoke"],
+    "local_client_dirs": [],
+    "local_client_max_depth": 3,
+    "local_client_max_files": 2000,
+    "local_client_max_size_mb": 200,
+    "ncm_timeout_sec": 300
   },
   "reuseModel": "",
   "separate": {

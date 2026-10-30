@@ -24,7 +24,18 @@
 - **开始训练前提醒硬件风险**（一句话说完即可）：训练时显卡会跑满、显存约 7.5–8G，笔记本会发热降频；期间别开游戏/剪辑/渲染；请插电源、保散热；别中途关机（每 5 个 epoch 存盘，可用 resume 续训）；磁盘留 ≥10G；**显存 <5G 会先停下来让你选：减步数 或 加 --allow-lowmem**（5–8G 只警告）；没有可用 GPU 会走 CPU，慢约 10 倍；**RTX 50 系必须用 cu128 的 torch**（旧 torch 没有 sm_120 内核，跑不了）。
 - **移调**（shift，-5..+5 的整数，默认 0）：用户说「降两个 key」「升 2 个半音」时用，正=升高。这是**整首一起移**（人声+伴奏同比例），避免跑调；不要承诺「只把人声移调」——那是实验模式，v0.1 不开放。
 
-## 2. 抓取模式（mode: auto）：先给风险提示，等用户确认
+## 2. 素材从哪来：四种音源
+
+- **目录导入**（`mode: "import"` + `folder`，默认）：用户自己的文件夹，只读。
+- **本机客户端**（`mode: "local"`）：扫描网易云 / QQ音乐 / 酷狗 / 酷我**已下载**的文件。
+  - 参数：`clients: ["netease"|"qqmusic"|"kugou"|"kuwo"]`（默认全部，`"qq"` 也认）、`keyword`（默认 = singer）。落盘时引擎侧是 `mode:"import" + sources.local_clients`，不用跟用户解释这个细节。
+  - **不需要账号、不需要登录态、只读不修改**；ncm 自动解密，`qmc`/`kgm` 等加密格式要用户先手动转。
+  - 用户说「用我电脑里下好的歌」就走这个，别让他手动找目录；非法客户端名会返回 `BAD_CLIENT`（返回里带 allowed）。
+  - 建完看 `preview.localFetch`：`fileCount` + `formats` 是扫描结果；`fetch-pending` 说明还没跑 fetch。
+- **B 站搜索**（`mode: "auto"`）：联网抓取，必须先确认版权（见下一节）。
+- **链接导入**：规划中，v0.3 还没有；用户提就先说「暂时只支持前三种」。
+
+## 3. 抓取模式（mode: auto）：先给风险提示，等用户确认
 
 - **用户说「用某某歌手自动找素材 / 你去帮我找歌」时，先别建 job**：把风险讲清楚（会联网搜索并下载音频、版权风险自负、可能触发平台风控、插件不内置音源），**要求用户明确确认**。
 - 用户确认后才传 copyrightAck:true：
@@ -34,10 +45,10 @@
 - 引擎侧还会再查一次 options.copyrightAck：cover_run 若收到 exit 2 / COPYRIGHT_ACK_REQUIRED，就是没确认，按第 2 条重新确认后重建 job。
 - 抓取失败不要反复重试；一次不成就回退到 import 模式，让用户给目录。
 
-## 3. 标准调用顺序
+## 4. 标准调用顺序
 
-1. cover_setup({ singer, refs, target, steps, mode, folder, shift, copyrightAck }) —— 拿 jobId、预筛预览、eta、shiftNote；
-   抓取模式（mode:"auto"）必须带 copyrightAck:true，否则只回 needsConfirm 提示。
+1. cover_setup({ singer, refs, target, steps, mode, folder, clients, keyword, voice, shift, copyrightAck }) —— 拿 jobId、预筛预览（含 voiceGuess / localFetch）、eta、shiftNote；
+   抓取模式（mode:"auto"）必须带 copyrightAck:true，否则只回 needsConfirm 提示；本机客户端（mode:"local"）不需要 folder，也不需要账号。
 2. 把 jobId + 预计耗时 + 预筛结果复述给用户，再问一句「现在开始跑吗」。
 3. cover_run({ jobId }) —— 立刻返回 pid，不会阻塞。告诉用户「已经在后台跑了，可以关掉这轮对话」。
 4. 隔一阵 cover_status({ jobId }) 看进度。不要连发，也不要自己 sleep 循环；训完可能几小时。
@@ -64,7 +75,7 @@
 只有用户明确说「彻底删掉/删干净」才用 cover_delete({ jobId, mode: "purge" })，并先提醒他不可恢复。
 正在跑的任务会自动先取消再删；导出到桌面的成品不会被删。
 
-## 4. 读返回值的方式
+## 5. 读返回值的方式
 
 - 所有工具都返回 { ok, ... }，永远不抛异常。ok:false 只表示这次没办成，不是插件坏了。
 - 常见错误码与说法：
@@ -78,6 +89,7 @@
   - ENGINE_EXIT_EARLY：引擎刚启动就退出（非 exit 2），把日志尾部如实转述。
   - BAD_LIMIT：抓取 limit 不在 1-50，给默认 8。
   - BAD_VOICE：voice 只认 auto / female / male；男歌手请改 male 再建 job。
+  - BAD_CLIENT：clients 只认 netease / qqmusic / kugou / kuwo（或中文名、qq）；返回里的 allowed 就是可选值，转述给用户即可。
   - REF_NOT_FOUND / REF_TOO_MANY：好球曲路径不存在（按行号）或超过 20 条；让用户改路径或先留空。
   - BAD_DELETE_MODE：删除的 mode 只能是 soft（默认，可找回）或 purge（物理删除）。
   - DEPS_MISSING：依赖体检是红的，新建任务被拦了。把返回里的 missing/hints 转述给用户，按 docs/INSTALL.md 装完再体检。
@@ -88,7 +100,7 @@
   - FFMPEG_MISSING：本机没有 ffmpeg，成品先以 wav 交付，提醒装好 ffmpeg 后可重转。
 - message 里的路径已被脱敏成 <path>，不要把 <path> 当真实路径去拼；要路径就用返回里结构化的字段。
 
-## 5. 说话方式
+## 6. 说话方式
 
 - 说人话：说「推得很满」「偏快」「要 55 分钟」这种，别背 JSON，也别堆阶段编号。
 - 不吹音质：v0.1 只保证管线跑通 + 质检指标（响度 -13±1.5 LUFS、断音率 <12 次/分、音域覆盖 ≥70%）；不合格就照实说并给建议（加步数 / 换素材 / 整首移调）。

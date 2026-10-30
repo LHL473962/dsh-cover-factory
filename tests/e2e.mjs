@@ -371,6 +371,40 @@ await step('refSearch：import + 版权确认后写进 job_config.options，refs
   assert.equal(del.ok, true, JSON.stringify(del))
 })
 
+await step('mode=local：config.sources 写 {local_clients:true, clients, keyword}，默认全选、关键词取歌手', async () => {
+  const r = await call('cover_setup', { singer: '本机扫描', mode: 'local', steps: 5000 })
+  assert.equal(r.ok, true, JSON.stringify(r).slice(0, 600))
+  assert.equal(r.mode, 'local')
+  assert.equal(r.keyword, '本机扫描', 'keyword 默认取 singer')
+  assert.deepEqual(r.clients, ['netease', 'qqmusic', 'kugou', 'kuwo'])
+  const cfg = JSON.parse(readFileSync(r.config, 'utf8'))
+  assert.equal(cfg.mode, 'import', '落盘 mode 用引擎认的 import')
+  assert.equal(cfg.sources.local_clients, true)
+  assert.deepEqual(cfg.sources.clients, ['netease', 'qqmusic', 'kugou', 'kuwo'])
+  assert.equal(cfg.sources.keyword, '本机扫描')
+  // fetch 还没跑：预筛预览里应该有 localFetch 说 fetch-pending
+  assert.equal(r.preview.localFetch.available, false)
+  assert.equal(r.preview.localFetch.reason, 'fetch-pending')
+
+  const r2 = await call('cover_setup', {
+    singer: '本机扫描', mode: 'local', steps: 5000, clients: ['qq'], keyword: '稻香',
+  })
+  assert.equal(r2.ok, true, JSON.stringify(r2).slice(0, 400))
+  const cfg2 = JSON.parse(readFileSync(r2.config, 'utf8'))
+  assert.deepEqual(cfg2.sources.clients, ['qqmusic'], '只扫描所选客户端（qq 别名归一成 qqmusic）')
+  assert.equal(cfg2.sources.keyword, '稻香')
+
+  await call('cover_delete', { jobId: r.jobId, mode: 'purge' })
+  await call('cover_delete', { jobId: r2.jobId, mode: 'purge' })
+})
+
+await step('面板 /jobs/create：非法客户端 -> BAD_CLIENT', async () => {
+  const r = await postJson('/jobs/create', { singer: '测试', mode: 'local', clients: ['spotify'] })
+  assert.equal(r.json.ok, false, JSON.stringify(r.json))
+  assert.equal(r.json.error, 'BAD_CLIENT')
+  assert.ok(Array.isArray(r.json.allowed) && r.json.allowed.includes('netease'))
+})
+
 try { rmSync(ROOT, { recursive: true, force: true }) } catch {}
 
 console.log('')

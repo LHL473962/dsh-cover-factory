@@ -36,6 +36,7 @@ from stages import base  # noqa: E402
 
 ENGINE_VERSION = "0.1.0"
 DEFAULT_CONFIG = os.path.join(ENGINE_DIR, "config_default.json")
+LOCAL_CONFIG = os.path.join(ENGINE_DIR, "config.local.json")
 
 
 # ------------------------------------------------------------------ 基础工具
@@ -71,6 +72,9 @@ def load_engine_cfg(override_path=None, job=None):
     cfg = base.read_json(DEFAULT_CONFIG, None)
     if not cfg:
         raise RuntimeError("引擎默认配置读不出来: " + DEFAULT_CONFIG)
+    local = base.read_json(LOCAL_CONFIG, None)
+    if isinstance(local, dict):
+        deep_merge(cfg, local)
     if override_path:
         over = base.read_json(override_path, None)
         if not isinstance(over, dict):
@@ -222,8 +226,8 @@ def cmd_init(args):
             if p:
                 refs_norm.append(str(p))
     folder = str(sources.get("folder") or sources.get("dir") or "").strip()
-    if mode == "import" and not folder and not refs_in:
-        return fail_json("MISSING_SOURCES", "import 模式需要 sources.folder 或 refs（素材目录/文件）", config=config_path)
+    if mode == "import" and not folder and not refs_in and not sources.get("local_clients"):
+        return fail_json("MISSING_SOURCES", "import 模式需要 sources.folder / refs / sources.local_clients", config=config_path)
 
     target_path, target_meta = normalize_target(config.get("target"))
     options = config.get("options") if isinstance(config.get("options"), dict) else {}

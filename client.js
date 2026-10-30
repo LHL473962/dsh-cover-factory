@@ -22,7 +22,18 @@ window.__ModuleLoader__.load({
     // 训练耗时：RTX 5060 Laptop 实测（约 0.37 秒/步）→ 5000≈30 分钟 / 9000≈55 分钟 / 18000≈1 小时 50 分
     const ETA = { 5000: '约 30 分钟', 9000: '约 55 分钟', 18000: '约 1 小时 50 分' }
     const ETA_HINT = '耗时按 RTX 5060 Laptop 实测（约 0.37 秒/步）；没有可用 GPU 会走 CPU，慢约 10 倍。'
-    const MODES = [['import', '导入本地素材（推荐）'], ['auto', '抓取（联网，需确认）']]
+    const MODES = [
+      ['import', '导入目录'],
+      ['local', '本机客户端已下载'],
+      ['auto', '联网抓取（需确认）'],
+    ]
+    const CLIENTS = [
+      ['netease', '网易云音乐'],
+      ['qqmusic', 'QQ音乐'],
+      ['kugou', '酷狗音乐'],
+      ['kuwo', '酷我音乐'],
+    ]
+    const ALL_CLIENTS = CLIENTS.map((c) => c[0])
     // 训练期间的硬件风险（与 docs/QUICKSTART.md、docs/FAQ.md 的「硬件与风险」一节同一份内容）
     const RISK_LINES = [
       '训练时显卡会跑满（接近 100%），显存占用约 7.5–8G；笔记本会明显发热、风扇全速，可能降频。',
@@ -115,7 +126,11 @@ window.__ModuleLoader__.load({
       const [jobs, setJobs] = React.useState([])
       const [msg, setMsg] = React.useState('')
       const [busy, setBusy] = React.useState('')
-      const [form, setForm] = React.useState({ singer: '', folder: '', target: '', refs: '', steps: 9000, mode: 'import', copyrightAck: false, refSearch: false, voice: 'auto' })
+      const [form, setForm] = React.useState({
+        singer: '', folder: '', target: '', refs: '',
+        steps: 9000, mode: 'import', copyrightAck: false, refSearch: false, voice: 'auto',
+        clients: ALL_CLIENTS.slice(), keyword: '',
+      })
       // 风险提示默认收起
       const [riskOpen, setRiskOpen] = React.useState(false)
       // 依赖体检：doctor 为 {ok, health, checks, missing, hints, message}
@@ -240,6 +255,10 @@ window.__ModuleLoader__.load({
           refs: refLines,
         }
         if (form.mode === 'import') body.folder = form.folder
+        if (form.mode === 'local') {
+          body.clients = (form.clients && form.clients.length ? form.clients : ALL_CLIENTS).slice()
+          if (String(form.keyword || '').trim()) body.keyword = String(form.keyword).trim()
+        }
         body.voice = form.voice || 'auto'
         body.refSearch = !!form.refSearch
         // auto 抓取一直需要确认；import 只有要联网搜好球曲时才需要
@@ -455,6 +474,32 @@ window.__ModuleLoader__.load({
               MODES.map((m) => h('option', { key: m[0], value: m[0] }, m[1])),
             ),
           ),
+          form.mode === 'local'
+            ? h('div', { style: { flex: '1 1 100%' } },
+              h('label', { style: S.label }, '扫描哪些本机客户端（默认全选）'),
+              h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 4 } },
+                CLIENTS.map(([id, label]) => h('label', { key: id, style: { display: 'flex', alignItems: 'center', gap: 6, color: '#94A3B8', fontSize: 12, cursor: 'pointer' } },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: (form.clients || []).includes(id),
+                    onChange: (e) => {
+                      const cur = (form.clients || []).slice()
+                      const next = e.target.checked ? cur.concat([id]) : cur.filter((x) => x !== id)
+                      setForm(Object.assign({}, form, { clients: next }))
+                    },
+                  }),
+                  label,
+                )),
+              ),
+            )
+            : null,
+          form.mode === 'local'
+            ? h('div', { style: S.field },
+              h('label', { style: S.label }, '关键词（默认=歌手名）'),
+              h('input', { style: S.input, value: form.keyword, onChange: (e) => setForm(Object.assign({}, form, { keyword: e.target.value })) }),
+              h('div', { style: S.hint }, '留空就用歌手名；按关键词匹配这些客户端里已下载的歌曲名 / 文件名。'),
+            )
+            : null,
           h('div', { style: S.field },
             h('label', { style: S.label }, '目标歌手声部'),
             h('select', {
@@ -519,6 +564,11 @@ window.__ModuleLoader__.load({
               : h('div', { style: S.hint }, '默认只在你给的素材目录里找；勾选后才会联网补。'),
           ),
         ),
+        form.mode === 'local'
+          ? h('div', { style: S.hint },
+            '会自动扫描常见下载目录；ncm 自动解密；qmc / kgm 等加密格式需手动转换；只读取不修改原文件，不需要账号、不需要登录态。',
+          )
+          : null,
         (form.mode === 'auto' || form.refSearch)
           ? h('label', { style: S.check },
             h('input', { type: 'checkbox', checked: !!form.copyrightAck, onChange: (e) => setForm(Object.assign({}, form, { copyrightAck: e.target.checked })) }),

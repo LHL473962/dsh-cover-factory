@@ -10,3 +10,4 @@ _deleted/
 .env
 *.log
 engine/examples/sample-work/logs/
+engine/config.local.json

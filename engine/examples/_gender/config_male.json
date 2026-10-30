@@ -1,4 +1,0 @@
-{"singer":"Gendermale","mode":"import",
- "sources":{"folder":"<DATA_DIR>/house/plugins/dsh-cover-factory/engine/examples/_gender/in"},
- "target":"<DATA_DIR>/house/plugins/dsh-cover-factory/engine/examples/_gender/in/target.wav",
- "options":{"steps":300,"voice":"male"}}
