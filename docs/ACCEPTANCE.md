@@ -7,7 +7,7 @@
 ## 0. 环境与设置
 
 - [ ] 插件目录在 DSH profile 的 `node_modules/dsh-cover-factory`，重启后插件页已启用
-- [ ] 六个工具可见：`cover_setup / cover_run / cover_status / cover_cancel / cover_list / cover_export`
+- [ ] 八个工具可见：`cover_doctor / cover_setup / cover_run / cover_status / cover_cancel / cover_list / cover_export / cover_delete`
 - [ ] `settings` 默认值正确：`defaultSteps=9000`、`allowDuet=false`、`autoDownload=false`、`outputDir` 指向桌面/翻唱工厂
 - [ ] 引擎就位：`engine/run.py` 存在，Python 可用；GPU 显存 ≥8G（或已知会走 CPU 决策）
 

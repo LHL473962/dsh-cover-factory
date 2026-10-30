@@ -1,14 +1,15 @@
-// tests/e2e.mjs —— 用替身引擎把六个工具跑一遍（不需要 GPU、不需要真引擎）
+// tests/e2e.mjs —— 用替身引擎把八个工具跑一遍（不需要 GPU、不需要真引擎）
 //
 // 跑法：node tests/e2e.mjs
-// 前提：本机有 Python（设置里的 python → 内置运行时 → PATH 的 python）。
+// 前提：本机有 Python（设置里的 python → DSH_PYTHON → PATH 的 python）。
 // 覆盖：ENGINE_NOT_READY / cover_setup / cover_run 非阻塞 / JOB_RUNNING / cover_status
 //       轮询到 done / cover_export 幂等 / cover_list / cover_cancel / 引擎失效后回退读 job.json。
 //
-// 替身引擎只实现 init|run|status|cancel 四条 CLI（tests/standin-engine/run.py），
+// 替身引擎实现 doctor|init|run|status|cancel（tests/standin-engine/run.py），
 // 用来钉住「插件对引擎的假设」，真引擎在 engine/ 下，与本文件无关。
 
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -64,11 +65,28 @@ mod.apply(ctx)
 const tools = Object.fromEntries(registered.map((d) => [d.name, d]))
 const call = (n, a) => tools[n].execute(a || {})
 
+// 直接打面板路由（跟页面走同一条 HTTP 路径）
+async function panelRequest(method, path, body) {
+  const text = body === undefined ? '' : JSON.stringify(body)
+  const req = {
+    method,
+    url: '/api/cover-factory' + path,
+    headers: { host: '127.0.0.1:1' },
+    async *[Symbol.asyncIterator]() { if (text) yield Buffer.from(text, 'utf8') },
+  }
+  const res = { statusCode: 0, body: '', writeHead(c) { this.statusCode = c }, end(b) { this.body = String(b) } }
+  await routes[0].handler(req, res)
+  return { code: res.statusCode, json: JSON.parse(res.body) }
+}
+const postJson = (p, b) => panelRequest('POST', p, b || {})
+const getJson = (p) => panelRequest('GET', p)
+
 // 没装 Python 的机器上明确跳过，而不是假装通过
 const sm = await import(pathToFileURL(here('lib/settings.js')).href)
 const py = sm.resolvePython({ python: '' })
-if (py.source === 'PATH') {
-  console.log('SKIP: 本机没找到 Python（设置 python / 内置运行时 / PATH 都没有）')
+const probePy = spawnSync(py.exe, ['--version'], { timeout: 15000, windowsHide: true })
+if (probePy.error || probePy.status !== 0) {
+  console.log('SKIP: 本机没有可用的 Python（设置 python / DSH_PYTHON / PATH 都没试通）')
   try { rmSync(ROOT, { recursive: true, force: true }) } catch {}
   process.exit(0)
 }
@@ -249,6 +267,59 @@ await step('cover_delete 软删：移到 _deleted/，列表里消失（回收站
   assert.equal(list.total, 1, '软删后只剩第一个 job')
   assert.ok(!list.jobs.some((j) => j.jobId === jobId2))
   assert.ok(!list.jobs.some((j) => String(j.jobId).startsWith('_')))
+})
+
+// ── 依赖体检 ────────────────────────────────────────────────────────────
+await step('cover_doctor：替身引擎全绿（health=green，missing 为空）', async () => {
+  const r = await call('cover_doctor', {})
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.equal(r.health, 'green', JSON.stringify(r.checks))
+  assert.equal(r.ready, true)
+  assert.deepEqual(r.missing, [])
+  assert.ok(Array.isArray(r.checks) && r.checks.length >= 3)
+  assert.ok(String(r.install).includes('INSTALL'))
+})
+
+await step('面板 POST /doctor 返回体检结果，GET /settings 带缓存', async () => {
+  const d = await postJson('/doctor', {})
+  assert.equal(d.json.ok, true, JSON.stringify(d.json))
+  assert.equal(d.json.health, 'green')
+  const s = await getJson('/settings')
+  assert.ok(s.json.doctor, '/settings 应该带上次体检结果')
+  assert.equal(s.json.doctor.health, 'green')
+})
+
+await step('体检红时：POST /jobs/create 被 DEPS_MISSING 拦住，且不建 job', async () => {
+  writeFileSync(join(ENGINE, 'doctor-red.flag'), 'red', 'utf8')
+  try {
+    const d = await postJson('/doctor', {})
+    assert.equal(d.json.ok, true, JSON.stringify(d.json))
+    assert.equal(d.json.health, 'red')
+    assert.ok(d.json.missingRequired.includes('applio'), JSON.stringify(d.json.missingRequired))
+    const before = (await getJson('/jobs')).json.total
+    const c = await postJson('/jobs/create', {
+      singer: '体检红', folder: MAT, target: TARGET, steps: 5000, mode: 'import',
+    })
+    assert.equal(c.json.ok, false, JSON.stringify(c.json))
+    assert.equal(c.json.error, 'DEPS_MISSING')
+    assert.ok(Array.isArray(c.json.missing) && c.json.missing.includes('applio'))
+    const after = (await getJson('/jobs')).json.total
+    assert.equal(after, before, '被拦时不该建出 job')
+  } finally {
+    rmSync(join(ENGINE, 'doctor-red.flag'), { force: true })
+  }
+})
+
+await step('装好后重新体检变绿：创建恢复，且缓存不锁死', async () => {
+  const d = await postJson('/doctor', {})
+  assert.equal(d.json.health, 'green', JSON.stringify(d.json))
+  const c = await postJson('/jobs/create', {
+    singer: '体检绿', folder: MAT, target: TARGET, steps: 5000, mode: 'import',
+  })
+  assert.equal(c.json.ok, true, JSON.stringify(c.json))
+  // 收尾：删掉这个临时 job，别影响别的断言
+  const del = await call('cover_delete', { jobId: c.json.jobId, mode: 'purge' })
+  assert.equal(del.ok, true, JSON.stringify(del))
 })
 
 try { rmSync(ROOT, { recursive: true, force: true }) } catch {}

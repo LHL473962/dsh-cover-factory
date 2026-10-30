@@ -47,6 +47,7 @@ const ctx = {
   },
 }
 
+import { doctorBlockCreate, normalizeDoctor } from '../lib/doctor.js'
 import { buildJobConfig, etaText } from '../lib/tools.js'
 import { isAlive } from '../lib/util.js'
 
@@ -90,9 +91,9 @@ await check('index.js: name / inject / apply / VERSION', () => {
 // ── 2. 工具注册 ─────────────────────────────────────────────────────────
 mod.apply(ctx)
 
-await check('注册了且只注册了 7 个 cover_* 工具', () => {
+await check('注册了且只注册了 8 个 cover_* 工具', () => {
   const names = registered.map((d) => d.name).sort()
-  assert.deepEqual(names, ['cover_cancel', 'cover_delete', 'cover_export', 'cover_list', 'cover_run', 'cover_setup', 'cover_status'])
+  assert.deepEqual(names, ['cover_cancel', 'cover_delete', 'cover_doctor', 'cover_export', 'cover_list', 'cover_run', 'cover_setup', 'cover_status'])
 })
 
 await check('每个工具：description/parameters/output/execute 形状合法', () => {
@@ -241,6 +242,70 @@ await check('buildJobConfig：import 模式忽略 search/limit/copyrightAck', ()
   assert.deepEqual(c.sources, { folder: 'F' })
   assert.equal(c.options.copyrightAck, undefined, 'import 不该写 copyrightAck')
   assert.equal(c.options.shift, 2)
+})
+
+// ── 3.3 依赖体检：normalizeDoctor / doctorBlockCreate（纯函数，不启引擎）──
+await check('normalizeDoctor：全绿 -> green，missing 为空，不拦建任务', () => {
+  const d = normalizeDoctor({
+    ok: true,
+    checks: [
+      { id: 'python', label: 'Python', status: 'ok', required: true, detail: '3.12' },
+      { id: 'ffmpeg', label: 'ffmpeg', status: 'ok', required: true },
+      { id: 'ytdlp', label: 'yt-dlp', status: 'ok', required: false },
+    ],
+  })
+  assert.equal(d.health, 'green')
+  assert.deepEqual(d.missing, [])
+  assert.deepEqual(d.missingRequired, [])
+  assert.equal(d.checks.length, 3)
+  const gate = doctorBlockCreate({ ok: true, health: d.health, ...d })
+  assert.equal(gate.block, false)
+})
+
+await check('normalizeDoctor：缺必需 -> red，missing/hints 齐，建任务被拦', () => {
+  const d = normalizeDoctor({
+    ok: false,
+    checks: [
+      { id: 'python', label: 'Python', status: 'ok', required: true },
+      { id: 'applio', label: 'Applio', status: 'missing', required: true, hint: 'git clone <applio> && pip install -r requirements.txt' },
+      { id: 'msst', label: 'MSST', status: 'missing', required: true, hint: '下载 kim 权重' },
+      { id: 'ytdlp', label: 'yt-dlp', status: 'ok', required: false },
+    ],
+  })
+  assert.equal(d.health, 'red')
+  assert.deepEqual(d.missingRequired.sort(), ['applio', 'msst'])
+  assert.ok(d.missing.includes('applio'))
+  assert.ok(d.hints.length >= 2, JSON.stringify(d.hints))
+  const gate = doctorBlockCreate({ ok: true, health: d.health, ...d })
+  assert.equal(gate.block, true)
+  assert.deepEqual(gate.missing.sort(), ['applio', 'msst'])
+  assert.ok(gate.hints.length >= 2)
+})
+
+await check('normalizeDoctor：只缺可选 -> yellow，不拦建任务', () => {
+  const d = normalizeDoctor({
+    checks: [
+      { id: 'python', status: 'ok', required: true },
+      { id: 'ytdlp', status: 'missing', required: false, hint: 'pip install yt-dlp' },
+    ],
+  })
+  assert.equal(d.health, 'yellow')
+  assert.deepEqual(d.missingOptional, ['ytdlp'])
+  assert.deepEqual(d.missingRequired, [])
+  assert.equal(doctorBlockCreate({ ok: true, health: d.health, ...d }).block, false)
+})
+
+await check('doctorBlockCreate：体检本身失败（ok:false）不拦建任务', () => {
+  assert.equal(doctorBlockCreate({ ok: false, error: 'DOCTOR_UNAVAILABLE' }).block, false)
+  assert.equal(doctorBlockCreate(null).block, false)
+})
+
+await check('引擎没就位时 cover_doctor 降级为 ok:false 且指向 INSTALL', async () => {
+  const r = await call('cover_doctor', {})
+  assert.equal(r.ok, false, JSON.stringify(r))
+  assert.equal(r.error, 'ENGINE_NOT_READY')
+  assert.ok(String(r.message).includes('INSTALL'), r.message)
+  assert.ok(!/[A-Za-z]:[\\/]/.test(r.message), 'message 泄漏路径：' + r.message)
 })
 
 // ── 3.4 好球曲（refs）校验 ─────────────────────────────────────────────
@@ -550,6 +615,27 @@ await check('POST /jobs/cancel|export 不存在的 job：JOB_NOT_FOUND', async (
   const e = await fakePost('/api/cover-factory/jobs/export', { jobId: 'nope' })
   assert.equal(e.json.ok, false)
   assert.equal(e.json.error, 'JOB_NOT_FOUND')
+})
+
+await check('面板 POST /doctor：引擎没就位时返回 ok:false（不假装依赖齐全）', async () => {
+  const r = await fakePost('/api/cover-factory/doctor', {})
+  assert.equal(r.code, 200)
+  assert.equal(r.json.ok, false, JSON.stringify(r.json))
+  assert.ok(['ENGINE_NOT_READY', 'DOCTOR_UNAVAILABLE'].includes(r.json.error), JSON.stringify(r.json))
+  assert.ok(String(r.json.install || '').includes('INSTALL'), JSON.stringify(r.json))
+})
+
+await check('体检不可用时创建不被误拦（不会抛 DEPS_MISSING）', async () => {
+  const r = await fakePost('/api/cover-factory/jobs/create', { singer: '测试', folder: HOME })
+  assert.equal(r.json.ok, false)
+  assert.notEqual(r.json.error, 'DEPS_MISSING', '体检失败不该把建任务拦掉：' + JSON.stringify(r.json))
+  assert.equal(r.json.error, 'ENGINE_NOT_READY')
+})
+
+await check('GET /settings 带 doctor 字段（可为 null）', async () => {
+  const r = await fakeRequest('/api/cover-factory/settings')
+  assert.equal(r.json.ok, true)
+  assert.ok('doctor' in r.json, 'settings 应带 doctor 字段')
 })
 
 await check('POST /jobs/delete：不存在的 job -> JOB_NOT_FOUND', async () => {

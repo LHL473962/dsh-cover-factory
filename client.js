@@ -32,6 +32,7 @@ window.__ModuleLoader__.load({
       '磁盘需要预留 ≥ 10G（素材 + 切片 + 特征 + 模型）。',
       '显存 <5G 会先停下来让你选：减步数 或 加 --allow-lowmem（引擎侧放行，唯一的硬件硬闸）；5–8G 只警告，继续跑。',
       '没有可用 GPU 会走 CPU，慢约 10 倍（9000 步约 9 小时）。',
+      'RTX 50 系（Blackwell）必须用 torch cu128 的版本（2.8.0+cu128）：官方旧 torch 没有 sm_120 内核，跑不了。',
     ]
 
     const asJson = async (res) => {
@@ -63,6 +64,10 @@ window.__ModuleLoader__.load({
       btnGhost: { height: 26, borderRadius: 6, border: 0, background: '#2A3A52', color: '#E2E8F0', cursor: 'pointer', fontSize: 11, padding: '0 9px' },
       btnDanger: { height: 26, borderRadius: 6, border: 0, background: '#43293A', color: '#FCA5A5', cursor: 'pointer', fontSize: 11, padding: '0 9px' },
       msg: { background: '#18212F', border: '1px solid #2A3A52', borderRadius: 8, padding: '8px 10px', color: '#C4B5FD', fontSize: 12, whiteSpace: 'pre-wrap', lineHeight: 1.6 },
+      healthBody: { background: '#161B26', border: '1px solid #2A3A52', borderRadius: 8, padding: '10px 12px', marginTop: 6, fontSize: 12, lineHeight: 1.7 },
+      checkRow: { display: 'flex', alignItems: 'baseline', gap: 6, color: '#C9D3E3', padding: '2px 0' },
+      mono: { fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 11, color: '#9FB3D1', marginTop: 3, wordBreak: 'break-all' },
+      blockNotice: { marginTop: 12, border: '1px solid #5A2A2A', background: '#2A1414', borderRadius: 8, padding: '10px 12px', fontSize: 12, lineHeight: 1.7, color: '#F3C6C6' },
       head: { display: 'grid', gridTemplateColumns: '1fr 1.1fr .7fr .55fr .8fr .4fr 2.6fr', gap: 8, alignItems: 'center', color: '#94A3B8', fontSize: 11, paddingBottom: 4 },
       row: { display: 'grid', gridTemplateColumns: '1fr 1.1fr .7fr .55fr .8fr .4fr 2.6fr', gap: 8, alignItems: 'center', padding: '7px 0', borderTop: '1px solid #24344A', fontSize: 12 },
       muted: { color: '#64748B', fontSize: 12 },
@@ -101,6 +106,23 @@ window.__ModuleLoader__.load({
       const [form, setForm] = React.useState({ singer: '', folder: '', target: '', refs: '', steps: 9000, mode: 'import', copyrightAck: false })
       // 风险提示默认收起
       const [riskOpen, setRiskOpen] = React.useState(false)
+      // 依赖体检：doctor 为 {ok, health, checks, missing, hints, message}
+      const [doctor, setDoctor] = React.useState(null)
+      const [healthOpen, setHealthOpen] = React.useState(false)
+      const [doctorBusy, setDoctorBusy] = React.useState(false)
+
+      const runDoctor = React.useCallback(async () => {
+        setDoctorBusy(true)
+        try {
+          const d = await jpost('/doctor', {})
+          setDoctor(d || { ok: false, health: 'unknown', message: '体检没有返回结果' })
+        } catch (e) {
+          setDoctor({ ok: false, health: 'unknown', message: '体检失败：' + e.message })
+        } finally {
+          setDoctorBusy(false)
+        }
+      }, [])
+
 
       const reloadSettings = React.useCallback(async () => {
         try {
@@ -123,7 +145,8 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         reloadSettings()
         reloadJobs()
-      }, [reloadSettings, reloadJobs])
+        runDoctor()
+      }, [reloadSettings, reloadJobs, runDoctor])
 
       // 任务表 5 秒轮询；组件卸载时清定时器
       React.useEffect(() => {
@@ -143,6 +166,7 @@ window.__ModuleLoader__.load({
             setSt(d.settings || st)
             setMsg('设置已保存' + (d.ignored && d.ignored.length ? '（忽略未知键：' + d.ignored.join('、') + '）' : ''))
             await reloadSettings()
+            await runDoctor()
           } else {
             setMsg('保存失败：' + (d.error || '') + ' ' + (d.message || ''))
           }
@@ -222,6 +246,55 @@ window.__ModuleLoader__.load({
         } finally { setBusy('') }
       }
 
+      const health = doctor && doctor.health ? doctor.health : 'unknown'
+      const healthColor = health === 'green' ? '#34D399' : health === 'yellow' ? '#F5A524' : health === 'red' ? '#F87171' : '#64748B'
+      const healthText = health === 'green' ? '依赖齐全' : health === 'yellow' ? '缺可选依赖' : health === 'red' ? '缺必需依赖' : (doctor && doctor.ok === false ? '体检没跑成' : '体检中…')
+      // 体检红 → 不让建 job（服务端 POST /jobs/create 也会用同一条规则拦一次）
+      const depsBlocked = !!(doctor && doctor.ok !== false && doctor.health === 'red')
+
+      const healthBar = h('div', null,
+        h('div', { style: S.bar },
+          h('span', {
+            style: { cursor: 'pointer', userSelect: 'none' },
+            title: '点击看缺哪项、怎么装',
+            onClick: () => setHealthOpen(!healthOpen),
+          },
+            h('span', { style: S.dot(healthColor) }),
+            '依赖体检：' + healthText + (healthOpen ? ' ▴' : ' ▾'),
+          ),
+          health === 'red' && doctor.missingRequired && doctor.missingRequired.length
+            ? h('span', { style: { color: '#F87171' } }, '缺：' + doctor.missingRequired.join('、'))
+            : null,
+          h('span', { style: { color: '#2A3A52' } }, '|'),
+          h('span', null, h('span', { style: S.dot(running > 0 ? '#FBBF24' : '#64748B') }), running > 0 ? running + ' 个任务在跑' : '当前没有任务在跑'),
+          h('button', { style: S.btnGhost, disabled: doctorBusy, onClick: runDoctor }, doctorBusy ? '体检中…' : '重新体检'),
+        ),
+        healthOpen
+          ? h('div', { style: S.healthBody },
+            !doctor
+              ? h('div', { style: S.muted }, doctorBusy ? '正在体检…' : '还没有体检结果，点「重新体检」。')
+              : doctor.ok === false
+                ? h('div', null,
+                  h('div', { style: { color: '#F5A524', fontWeight: 600 } }, '体检没跑成：' + (doctor.message || doctor.error || '未知原因')),
+                  h('div', { style: S.mono }, '装法见 ' + (doctor.install || 'docs/INSTALL.md') + '；装完点「重新体检」。'),
+                )
+                : h('div', null,
+                  (doctor.checks || []).map((c, i) => h('div', { key: i, style: S.checkRow },
+                    h('span', { style: { color: c.status === 'ok' ? '#34D399' : c.status === 'warn' ? '#F5A524' : '#F87171' } },
+                      c.status === 'ok' ? '✓' : c.status === 'warn' ? '!' : '✗'),
+                    h('span', null, c.label + (c.required ? '' : '（可选）') + (c.detail ? '：' + c.detail : '')),
+                  )),
+                  (doctor.hints && doctor.hints.length)
+                    ? h('div', { style: { marginTop: 8, color: '#F5A524' } }, '怎么装：')
+                    : null,
+                  (doctor.hints || []).map((t, i) => h('div', { key: 'h' + i, style: S.mono }, '· ' + t)),
+                  h('div', { style: { marginTop: 8, color: '#64748B' } },
+                    '完整安装路径（全自动 bootstrap / 半自动 / 已有环境指过去）见 ' + (doctor.install || 'docs/INSTALL.md') + '。'),
+                ),
+          )
+          : null,
+      )
+
       const settingsCard = h('div', { style: S.card },
         h('div', { style: S.title }, h('span', null, '设置')),
         st ? h('div', null,
@@ -232,7 +305,7 @@ window.__ModuleLoader__.load({
             ),
             h('div', { style: S.field },
               h('label', { style: S.label }, 'Python 解释器 python'),
-              h('input', { style: S.input, value: st.python || '', placeholder: '留空 = 内置运行时，再回退 PATH', onChange: (e) => patch({ python: e.target.value }) }),
+              h('input', { style: S.input, value: st.python || '', placeholder: '留空 = DSH_PYTHON → PATH 的 python', onChange: (e) => patch({ python: e.target.value }) }),
             ),
             h('div', { style: S.field },
               h('label', { style: S.label }, '成品输出目录 outputDir'),
@@ -374,23 +447,27 @@ window.__ModuleLoader__.load({
             ? h('div', { style: S.riskBody }, RISK_LINES.map((line, i) => h('div', { key: i, style: S.riskLine }, '· ' + line)))
             : null,
         ),
+        depsBlocked
+          ? h('div', { style: S.blockNotice },
+            h('div', { style: { color: '#F87171', fontWeight: 600, marginBottom: 4 } }, '依赖没齐，先别建 job（建了也跑不起来）'),
+            h('div', null, '缺必需：' + ((doctor.missingRequired && doctor.missingRequired.length) ? doctor.missingRequired.join('、') : (doctor.missing || []).join('、') || '未知')),
+            (doctor.hints || []).slice(0, 4).map((t, i) => h('div', { key: i, style: S.mono }, '· ' + t)),
+            h('div', { style: { marginTop: 6 } }, '按 docs/INSTALL.md 装好后，点顶部「重新体检」；变绿这里就能建了。'),
+          )
+          : null,
         h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', marginTop: 12 } },
           h('button', {
-            style: Object.assign({}, S.btn, busy === 'create' ? { opacity: 0.6 } : {}),
-            disabled: busy === 'create',
+            style: Object.assign({}, S.btn, (busy === 'create' || depsBlocked) ? { opacity: 0.5, cursor: 'not-allowed' } : {}),
+            disabled: busy === 'create' || depsBlocked,
+            title: depsBlocked ? '依赖体检是红的：先装依赖' : '',
             onClick: submit,
-          }, busy === 'create' ? '提交中…' : '新建任务'),
-          h('span', { style: S.muted }, '建完不会自动开跑：在任务表点「运行」。'),
+          }, busy === 'create' ? '提交中…' : (depsBlocked ? '依赖没齐，不能建' : '新建任务')),
+          h('span', { style: S.muted }, depsBlocked ? '装完点顶部「重新体检」。' : '建完不会自动开跑：在任务表点「运行」。'),
         ),
       )
 
       return h('div', { style: S.wrap },
-        h('div', { style: S.bar },
-          h('span', null, h('span', { style: S.dot(engine && engine.ready ? '#34D399' : '#F87171') }), engine ? (engine.ready ? '引擎就绪' : '引擎未就绪') : '引擎状态未知'),
-          engine && !engine.ready && engine.message ? h('span', { style: { color: '#F87171' } }, '（' + engine.message + '）') : null,
-          h('span', { style: { color: '#2A3A52' } }, '|'),
-          h('span', null, h('span', { style: S.dot(running > 0 ? '#FBBF24' : '#64748B') }), running > 0 ? running + ' 个任务在跑' : '当前没有任务在跑'),
-        ),
+        healthBar,
         msg ? h('div', { style: S.msg }, msg) : null,
         settingsCard,
         jobsCard,

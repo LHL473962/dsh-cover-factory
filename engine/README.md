@@ -5,8 +5,11 @@
 ## 目录
 
     engine/
-      run.py                 CLI（init / run / status / cancel / delete）
+      run.py                 CLI（init / run / status / cancel / delete / doctor / setup）
       config_default.json    默认参数（模型路径、混音参数、QA 阈值）
+      setup/                 依赖体检/安装
+        checks.py            doctor 的 8 项检查（含显卡/torch 架构匹配）
+        bootstrap.py         --check / --install，日志写 setup/setup.log
       stages/                10 个 stage，每个暴露 run(job, cfg) -> dict
         base.py              日志 / subprocess / 幂等签名 / 路径约定
         fetch.py separate.py select.py clean.py dataset.py
@@ -25,6 +28,8 @@
     python engine/run.py status --job <job.json> [--text]
     python engine/run.py cancel --job <job.json>
     python engine/run.py delete --job <job.json> [--purge]
+    python engine/run.py doctor [--config 覆盖.json]
+    python engine/run.py setup --check|--install [--config 覆盖.json]
 
 退出码：0 成功；2 需要用户决策（硬件/版权确认，决策写在 job.json 的 decision 字段）；1 失败。
 status 默认输出 job JSON（插件直接解析），--text 给人看。
@@ -124,7 +129,23 @@ job 配置（init 的 sources 字段）：
 - **空闲显存 < 8G**：只警告（可能 OOM），继续跑；建议先关其它 GPU 程序。
 - **空闲显存 < 5G**：退出码 2（`LOW_VRAM`），message 给两种选择：① 减少 `options.steps`；② 加 `--allow-lowmem` 显式放行。
 - **训练开始前**日志会打醒目横幅：显卡将跑满、勿开其它 GPU 程序、插电源/散热、每 5 epoch 存盘、中断可 `run --resume`。
-- 只算 train 的耗时（0.37 秒/步，RTX 5060 Laptop 8G，train 显存占用约 7.5G）：
+### 显卡 / torch 兼容矩阵
+
+doctor 的 `gpu_torch_match` 会对比 `torch.cuda.get_device_capability(0)` 与 `torch.cuda.get_arch_list()`：
+capability 的 `sm_XX` 不在 arch_list 里 = 这个 torch 轮子没有该卡的 kernel（会报 no kernel image / CUDA error），必须换 cu 版本。
+
+| 显卡 | compute capability | 推荐 torch | 说明 |
+| --- | --- | --- | --- |
+| RTX 50 系（Blackwell） | sm_120 | **必须 cu128**（torch ≥ 2.7） | 旧 cu 轮子不含 sm_120 |
+| RTX 40 系（Ada） | sm_89 | 官方旧版 cu121 / cu118 可用 | 新 cu128 也可以 |
+| RTX 30 系（Ampere） | sm_86 | cu118 最稳 | cu121 亦可 |
+| RTX 20 系及更老 | sm_75 / 更早 | 可用但慢 | FP16 支持差，建议降步数 |
+| 无独显 | — | CPU 回退 | 约 10 倍慢（`gpu_torch_match` 标 optional） |
+
+> 旧版 RVC（2.2.231006）在 torch>=2.6 下需要补丁：`av` 依赖、`torch.load(..., weights_only=...)`、`index_root` 环境变量；
+> 30/40 系继续用旧 torch（<2.6）可以不打；50 系必须新 torch（cu128），所以需要补丁（本机 old_rvc 已能跑）。
+
+只算 train 的耗时（0.37 秒/步，RTX 5060 Laptop 8G，train 显存占用约 7.5G）：
 
 | 步数 | 预计耗时（只算 train 阶段） |
 | --- | --- |
@@ -152,6 +173,42 @@ job 配置（init 的 sources 字段）：
 - 输出 JSON：`{ok, job, movedTo}` 或 `{ok, job, deleted}`；job.json 不存在 -> 退出码 1。
 - **声库不动**：bankDir 里的 `<singer>/<fingerprint>.pth/.index/.meta.json` 不在 workdir 内，删除 job 不会碰模型；下次同素材可直接复用。
 - 桌面成品（outputDir 里的 mp3/report）也不在 workdir 内，不会被删。
+
+## 安装依赖
+
+先体检（输出 `{ok, checks:[{name,ok,found,path,hint}]}`，缺项退出码 1）：
+
+    python engine/run.py doctor
+
+检查 + 尝试自动安装（进度走 stderr，最后 stdout 输出汇总 JSON；每步日志写 `engine/setup/setup.log`）：
+
+    python engine/setup/bootstrap.py --check
+    python engine/setup/bootstrap.py --install
+
+| 依赖 | 能不能自动装 | 说明 |
+| --- | --- | --- |
+| Python 3.10+ | 手动 | python.org 安装；torch 环境建议独立 venv |
+| torch + CUDA | 手动 | 按显卡/驱动选 CUDA 版本：`python -m pip install torch --index-url https://download.pytorch.org/whl/cu128` |
+| ffmpeg | 自动（pip imageio-ffmpeg）或手动 | bootstrap 装完会给出可执行文件路径，把它写进 `paths.ffmpeg`；失败则从 https://www.gyan.dev/ffmpeg/builds/ 下载 |
+| yt-dlp | 自动（pip，在 `paths.ytdlp_python` 环境里） | 只有 fetch search 抓取模式需要；import 模式不联网 |
+| MSST 代码 + MelBand kim 权重 | 代码可手动 clone；权重**不自动下** | `git clone https://github.com/ZFTurbo/Music-Source-Separation-Training`；权重按模型页/许可自行下载放 `pretrain/`，再配 `paths.msst_*` |
+| Applio | 手动 | `git clone https://github.com/IAHispano/Applio`，建独立 env 装 requirements，配 `paths.applio_root/applio_python` |
+| 旧版 RVC 2.2.231006 | 自动 clone + 拷本机权重 | `git clone --branch 2.2.231006 ...`；`hubert_base.pt`/`rmvpe.pt` 从 `paths.rvc_models_src` 递归找并复制；找不到会提示从 `https://huggingface.co/lj1995/VoiceConversionWebUI` 手动下载 |
+| 声库权重 / 分离权重 / 预训练底模 | 一律不自动下载 | 许可各异、体积大 |
+
+**为什么不能打包整个环境**：torch/CUDA 必须按显卡与驱动选版本；MSST/RVC/Applio 的模型许可各不相同；整套依赖 5–10G。
+所以引擎只做“体检 + 小件自动装 + 大件给命令”，大模型不替你下载。
+
+`paths` 覆盖（改 `config_default.json`，或用 `--config 覆盖.json`）：
+
+    python / applio_python / rvc_python / msst_python / ytdlp_python
+    ffmpeg / ffmpeg_fallbacks
+    msst_root / msst_inference / msst_config / msst_checkpoint
+    applio_root
+    rvc_root / rvc_hubert / rvc_rmvpe / rvc_models_src
+    bankDir / export_dir / room_ir / nvidia_smi
+
+默认值是本机路径（`D:/Apps/...`），换机器只需要改这些；`doctor` 会告诉你哪项没对上。
 
 ## 最小验证
 

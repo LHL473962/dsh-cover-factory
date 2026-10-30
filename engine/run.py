@@ -8,6 +8,8 @@
   python engine/run.py status --job <job.json> [--text]
   python engine/run.py cancel --job <job.json>
   python engine/run.py delete --job <job.json> [--purge]
+  python engine/run.py doctor [--config 覆盖.json]
+  python engine/run.py setup --check|--install [--config 覆盖.json]
 
 退出码：0 成功；2 需要用户决策（硬件/版权确认）；1 失败。
 job.json 原子写（tmp + os.replace）；每个 stage 日志写 <workdir>/logs/<stage>.log。
@@ -967,6 +969,25 @@ def cmd_delete(args):
     return 0
 
 
+# ------------------------------------------------------------------ doctor / setup
+
+def cmd_doctor(args):
+    from setup import checks
+    cfg = checks.load_config(getattr(args, "config", "") or None)
+    payload = checks.doctor_payload(cfg)
+    say(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if payload.get("ok") else 1
+
+
+def cmd_setup(args):
+    from setup import bootstrap
+    argv = ["--install"] if getattr(args, "install", False) else ["--check"]
+    cfg = getattr(args, "config", "") or ""
+    if cfg:
+        argv.extend(["--config", cfg])
+    return bootstrap.main(argv)
+
+
 # ------------------------------------------------------------------ main
 
 def main(argv=None):
@@ -1013,6 +1034,14 @@ def main(argv=None):
     p_delete.add_argument("--job", required=True)
     p_delete.add_argument("--purge", action="store_true", help="物理删除整个 workdir（不可恢复）")
 
+    p_doctor = sub.add_parser("doctor", help="依赖体检（JSON；缺项退出码 1）")
+    p_doctor.add_argument("--config", default="", help="引擎配置覆盖 JSON（paths 覆盖）")
+
+    p_setup = sub.add_parser("setup", help="依赖检查/安装（bootstrap）")
+    p_setup.add_argument("--check", action="store_true", help="只检测（默认）")
+    p_setup.add_argument("--install", action="store_true", help="尝试自动安装能自动装的部分")
+    p_setup.add_argument("--config", default="")
+
     args = parser.parse_args(argv)
     if not args.cmd:
         parser.print_help()
@@ -1028,6 +1057,10 @@ def main(argv=None):
         return cmd_cancel(args)
     if args.cmd == "delete":
         return cmd_delete(args)
+    if args.cmd == "doctor":
+        return cmd_doctor(args)
+    if args.cmd == "setup":
+        return cmd_setup(args)
     parser.print_help()
     return 1
 

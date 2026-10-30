@@ -19,7 +19,13 @@
     "room_ir": "<DATA_DIR>/out/tuning/room_ir.wav",
     "export_dir": "",
     "ytdlp_python": "python",
-    "bankDir": "<DATA_DIR>/house/banks/"
+    "ytdlp_python_fallbacks": ["C:/Users/yourname/.dsh/bili-humanism/venv-frames/Scripts/python.exe"],
+    "bankDir": "<DATA_DIR>/house/banks/",
+    "nvidia_smi": "",
+    "msst_inference": "",
+    "rvc_models_src": "D:/Apps/rvc-models",
+    "rvc_hubert": "",
+    "rvc_rmvpe": ""
   },
   "audio": {
     "sample_rate": 44100,

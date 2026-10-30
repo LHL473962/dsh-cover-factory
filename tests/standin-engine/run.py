@@ -10,7 +10,7 @@
 
 行为：init 写 job.json（stages 全 pending）；run 逐阶段 done（每段 sleep 0.2s），
 mix 造 out.wav、qa 造 report.json、export 造 out.mp3；status 原样打印 job.json；cancel 直接成功。
-用它可以在没有 GPU、没有真引擎的情况下把插件六个工具跑一遍。
+用它可以在没有 GPU、没有真引擎的情况下把插件八个工具跑一遍（doctor 也做了替身）。
 
 刻意约定（也是插件对真引擎的假设，引擎侧可按需调整但要两边一致）：
 - job.json 落在 --workdir 根目录，字段 version/id/singer/mode/sources/refs/target/options/stages/result
@@ -51,6 +51,25 @@ def log(wd, stage, text):
     with open(os.path.join(logs, stage + '.log'), 'a', encoding='utf-8') as fh:
         fh.write('[' + time.strftime('%H:%M:%S') + '] ' + text + '\n')
 
+
+if cmd == 'doctor':
+    here = os.path.dirname(os.path.abspath(__file__))
+    red = os.path.exists(os.path.join(here, 'doctor-red.flag'))
+    checks = [
+        {'id': 'python', 'label': 'Python', 'status': 'ok', 'required': True, 'detail': '3.12 (standin)'},
+        {'id': 'ffmpeg', 'label': 'ffmpeg', 'status': 'ok', 'required': True, 'detail': 'imageio-ffmpeg'},
+        {'id': 'applio', 'label': 'Applio', 'status': 'missing' if red else 'ok',
+         'required': True, 'hint': 'git clone https://github.com/IAHispano/Applio && pip install -r requirements.txt'},
+        {'id': 'msst', 'label': 'MSST 分离', 'status': 'ok', 'required': True},
+        {'id': 'ytdlp', 'label': 'yt-dlp（抓取模式，可选）', 'status': 'ok', 'required': False,
+         'hint': 'pip install yt-dlp'},
+    ]
+    print(json.dumps({
+        'ok': not red,
+        'checks': checks,
+        'hints': ['见 docs/INSTALL.md 的路径 B'] + (['先装 Applio 再重新体检'] if red else []),
+    }, ensure_ascii=False))
+    sys.exit(0)
 
 if cmd == 'init':
     cfg = load(opt('--config'))

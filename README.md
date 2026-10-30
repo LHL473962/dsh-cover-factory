@@ -15,7 +15,12 @@
 - ffmpeg（<DATA_DIR>/tools/bin 或 imageio 自带）
 
 ## 工具
-- cover_setup / cover_run / cover_status / cover_cancel / cover_list / cover_export
+- cover_doctor（依赖体检：green/yellow/red）
+- cover_setup / cover_run / cover_status / cover_cancel / cover_list / cover_export / cover_delete
+
+## 依赖
+不打包进仓库（torch/CUDA 随显卡变、模型许可各异、全量 5–10G）。安装与体检见 [docs/INSTALL.md](docs/INSTALL.md)：
+`cover_doctor({})` → 缺什么按提示装 → `python engine/run.py setup --install` 可自动装一部分。
 
 ## 注意
 - **抓取模式**默认关闭：开启后下载音频的版权风险由使用者自行承担。

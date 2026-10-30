@@ -48,3 +48,10 @@
 - 新增硬件体检：`logs/hw.log` + `job.hw`；无 GPU 警告 CPU 回退；空闲 <8G 警告；**<5G 唯一硬闸**（exit 2，需减步数或 `--allow-lowmem`）。
 - 训练日志加醒目警告横幅；UI 加「训练期间会发生什么（风险提示）」折叠块；任务行新增「续跑」按钮。
 - 测试：smoke 73/73、e2e 12/12。
+## 2026-10-30 21:00 更新
+- 新增 `cover_doctor`（8 项体检：python/torch_cuda/gpu_torch_match/ffmpeg/msst/applio/old_rvc/ytdlp），本机 8/8 全绿。
+- 新增 `engine/setup/bootstrap.py`（`run.py setup --install`）：yt-dlp/ffmpeg/旧版 RVC 可自动，MSST 权重与 torch 必须人工。
+- 新增 docs/INSTALL.md（三条路径 + 显卡/torch 矩阵 + 为什么不打包）。
+- **显卡矩阵**：50系必须 cu128（旧 torch 无 sm_120）；40系 cu121/cu118 可用；30系 cu118 最稳；20系及更老可用但慢；无独显 CPU 慢 10 倍。
+- doctor 的 `gpu_torch_match` 会比对 capability 与 torch arch_list，不匹配直接红并给 cu 版本建议。
+- 测试：smoke 83/83、e2e 16/16、doctor 8/8。

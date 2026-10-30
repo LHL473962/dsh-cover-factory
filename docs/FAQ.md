@@ -144,7 +144,7 @@ v0.1 **不做和声生成，也不做声部分离**。
 | 键 | 默认 | 作用 |
 | --- | --- | --- |
 | engineDir | 插件目录/engine | 引擎位置 |
-| python | 空（回退内置运行时，再回退 PATH） | Python 解释器 |
+| python | 空（回退 DSH_PYTHON，再回退 PATH） | Python 解释器 |
 | outputDir | 桌面/翻唱工厂 | 成品目录 |
 | defaultSteps | 9000 | 默认步数 |
 | allowDuet | false | 放行对唱/合唱 |
@@ -162,9 +162,9 @@ v0.1 **不做和声生成，也不做声部分离**。
 2. 是否重启 DSH、插件页是否启用。
 3. 工具列表有没有 `cover_setup`；调 `cover_list` 能返回就说明插件活着。
 4. 返回 `ENGINE_NOT_READY` 是缺 `engine/run.py` 或 Python 不可用，**不是插件 bug**。
-5. 设置里 `python` 为空时，先用内置运行时，再回退 PATH 的 python。
+5. 设置里 `python` 为空时，先用环境变量 `DSH_PYTHON`，再回退 PATH 的 python。
 
-六个工具全部 `ok:false` 也不抛异常，所以"没反应"多半是没装上或没启用。
+所有工具都 `ok:false` 也不抛异常，所以"没反应"多半是没装上或没启用；先跑 `cover_doctor` 看依赖齐不齐。
 
 ## Q20. 能商用吗？版权怎么算？
 
@@ -180,6 +180,41 @@ v0.1 **不做和声生成，也不做声部分离**。
 - 断电 / 过热关机之后，先等机器凉下来、确认电源和散热，再 resume。
 - 界面上对同一个 job 点「续跑」等价于 `resume: true`。
 
+## Q22. 依赖没装齐怎么办？体检红/黄是什么意思？
+
+先跑 `cover_doctor({})`（或设置页顶部「重新体检」）：
+
+- **green**：全齐，直接建 job。
+- **yellow**：必需项齐，只缺可选（目前只有 yt-dlp，只影响抓取模式）；import 模式照常用。
+- **red**：缺必需项。新建任务会被禁用、服务端也会拒（`DEPS_MISSING`）。
+  把 `missing` + `hints` 照着做，或看 `docs/INSTALL.md` 的三条路径：
+  A `python engine/run.py setup --install`（能自动装的部分）/ B 全手动 + doctor 验证 / C 已有环境把 `paths` 指过去。
+- `ok:false`（`ENGINE_NOT_READY` / `DOCTOR_UNAVAILABLE`）：体检本身没跑成，**不等于依赖齐全**，按 INSTALL.md 手动核对。
+
+装完点「重新体检」（缓存 10 分钟自动过期）。
+
+## Q23. 显卡和 torch 版本怎么配？50 系为什么必须 cu128？
+
+旧版 RVC（2023 代码）本身**不挑卡**，挑的是 **torch 的 CUDA 版本**——torch 没编进这张卡的算力内核，就跑不起来。
+
+| 显卡 | 算力 | torch 要求 |
+|---|---|---|
+| RTX 50 系（5060–5090） | Blackwell / sm_120 | **必须 cu128+**（本机这套 `2.8.0+cu128`），官方旧 torch 跑不了 |
+| RTX 40 系（4060–4090） | Ada / sm_89 | 官方 cu118 / cu121 即可（CUDA 11.8 起支持 Ada），**不用打补丁** |
+| RTX 30 系（3060–3090） | Ampere / sm_86 | cu118 最稳 |
+| RTX 20 系及更老 | sm_75 / 70 / 61 | cu118，能跑但慢 |
+| 无独显 | — | CPU，约慢 10 倍 |
+
+**为什么要打补丁**：只有在 **torch >= 2.6 上跑旧版 RVC**（50 系唯一可行路径）才需要兼容 `av` API 变更、`torch.load` 的 `weights_only`、以及 `index_root` 为空的情况；30/40 系用旧 torch 不需要这些补丁。
+
+**一条命令自查**（要用装了 torch 的那个解释器，即 `paths.python`；本机是 `D:/Apps/rvc-env/python.exe`）：
+
+    D:/Apps/rvc-env/python.exe -c "import torch;print(torch.__version__, torch.version.cuda, torch.cuda.get_device_capability(0), torch.cuda.get_arch_list())"
+
+本机输出：`2.8.0+cu128 12.8 (12, 0) ['sm_61','sm_70','sm_75','sm_80','sm_86','sm_90','sm_100','sm_120']` → `(12, 0)` 对应列表里的 `sm_120`，所以 50 系能跑。
+
+看 `get_device_capability(0)` 的 `(major, minor)` 在不在 `get_arch_list()` 里：**不在 = 这版 torch 不支持这张卡**，换对应的 cu 版本重装（50 系 → cu128+）。完整对照表和说明见 `docs/INSTALL.md` 的「显卡与 torch 版本怎么选」。
+
 ## 附录：硬件与风险（训练期间必看）
 
 - 训练时**显卡会跑满（接近 100%）**，显存占用约 **7.5–8G**；笔记本会明显发热、风扇全速，可能降频。
@@ -189,5 +224,6 @@ v0.1 **不做和声生成，也不做声部分离**。
 - 磁盘需要预留 **≥ 10G**（素材 + 切片 + 特征 + 模型）。
 - 显存 **<5G** 会先停下来让你选：**减步数** 或 加 `--allow-lowmem`（这是唯一的硬件硬闸）；**5–8G 只警告**，继续跑。
 - **没有可用 GPU** 会走 CPU，**慢约 10 倍**（9000 步约 9 小时）。
+- **RTX 50 系（Blackwell, sm_120）必须用 cu128 的 torch**（2.8.0+cu128）；旧版官方 torch 没有 sm_120 内核，跑不了。
 
 界面上的「训练期间会发生什么（风险提示）」折叠块（设置 → 翻唱工厂 → 新建任务）写的是同一份内容。
