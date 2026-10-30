@@ -39,7 +39,11 @@
         { "name": "applio",     "ok": true,  "found": "Applio + dsh_rvc2.py", "path": "<Applio 目录>", "hint": "" },
         { "name": "old_rvc",    "ok": true,  "found": "旧版 RVC 2.2.231006 + hubert/rmvpe", "path": "<RVC 目录>", "hint": "" },
         { "name": "ytdlp",      "ok": false, "found": "找不到 python: python", "path": "python", "hint": "pip install -U yt-dlp" }
-      ] }
+      ],
+      "suggestedTorch": { "gpu": "RTX 5060 Laptop", "capability": "sm_120", "cuda": "cu128",
+                          "torch": "2.8.x", "indexUrl": "https://download.pytorch.org/whl/cu128",
+                          "python": "<paths.python>", "reason": "Blackwell 只有 cu128+ 有 sm_120 内核" },
+      "torchInstallCommand": "<paths.python> -m pip install torch --index-url https://download.pytorch.org/whl/cu128" }
 
 插件把它规整成上面 `checks[]` 形状（`name→id`、`ok→status`、`found→detail`），
 并把 **ytdlp 标为可选**（其余为必需）。引擎若以后加 `required`/`label` 字段，插件照样认。
@@ -66,7 +70,17 @@
 所以「全自动」只覆盖能自动的那部分；剩下三项（torch / Applio / MSST 权重）**必须人工**，bootstrap 结束时会告诉你还缺什么。
 **需要**：≥15G 空闲磁盘、能访问 PyPI / GitHub / HuggingFace（或配镜像）。
 
-装完：
+### 只装/重装 torch（先看命令，再加 --yes 真装）
+
+    python engine/run.py setup --install-torch --dry-run   # 只打印将要执行的 pip 命令，不动环境（默认就是 dry-run）
+    python engine/run.py setup --install-torch --yes       # 真装（约 2.5–3G，按显卡自动选 cu 版本）
+    python engine/run.py setup --install-torch --python D:/Apps/rvc-env/python.exe --yes   # 指定装进哪个环境
+
+- 打印的就是 `cover_doctor` 的 `torchInstallCommand`（按你这张卡的 capability 算出来的），核对后再 `--yes`；
+- 装错版本的症状：50 系报 `no kernel image is available` 或 `torch.cuda.is_available() == False`；
+- 装完跑 `python engine/run.py doctor`（或 `cover_doctor`）确认 `torch_cuda` 与 `gpu_torch_match` 都变 ok。
+
+装完整套：
 
     python engine/run.py doctor     # 或 cover_doctor({})
 
@@ -111,13 +125,22 @@
 
 旧版 RVC（2023 代码）本身**不挑卡**，挑的是 **torch 的 CUDA 版本**：卡再新，这版 torch 没编进对应算力（sm_XX）内核，照样跑不了。
 
-| 显卡 | 架构 / 算力 | torch 要求 | 说明 |
-|---|---|---|---|
-| RTX 50 系（5060 / 5070 / 5080 / 5090） | Blackwell / **sm_120** | **必须 cu128+**（本机这套 `2.8.0+cu128`） | 官方旧 torch 没有 sm_120 内核，**根本跑不了**，不是「慢一点」 |
-| RTX 40 系（4060–4090） | Ada / sm_89 | 官方 cu118 / cu121 即可 | CUDA 11.8 起支持 Ada，**无需打补丁** |
-| RTX 30 系（3060–3090） | Ampere / sm_86 | cu118 最稳 | 兼容性最好的一档 |
-| RTX 20 系及更老（2080 / 1080 …） | Turing / Pascal，sm_75 / 70 / 61 | cu118 | 能跑，速度慢 |
-| 无独显 | — | 任意（CPU 版） | 纯 CPU 训练，约慢 **10 倍** |
+| 显卡 | 架构 / 算力 | torch 要求 | doctor 会推荐 | 说明 |
+|---|---|---|---|---|
+| RTX 50 系（5060 / 5070 / 5080 / 5090） | Blackwell / **sm_120** | **必须 cu128+** | `cu128`（torch 2.8.x） | 官方旧 torch 没有 sm_120 内核，**根本跑不了**，不是「慢一点」 |
+| RTX 40 系（4060–4090） | Ada / sm_89 | 官方 cu118 / cu121 即可 | `cu121`（旧 torch 也行，`cu118` 可替代） | CUDA 11.8 起支持 Ada，**无需打补丁** |
+| RTX 30 系（3060–3090） | Ampere / sm_86 | cu118 最稳 | `cu118` | 兼容性最好的一档 |
+| RTX 20 系及更老（2080 / 1080 …） | Turing / Pascal，sm_75 / 70 / 61 | cu118 | `cu118` | 能跑，速度慢 |
+| 无独显 | — | CPU 版 | `--index-url .../whl/cpu` | 纯 CPU 训练，约慢 **10 倍** |
+
+`cover_doctor` 会按**你这张卡**算出推荐，并在 `suggestedTorch` / `torchInstallCommand` 里返回（设置页体检展开区可以直接复制命令）：
+
+    "suggestedTorch": { "gpu":"RTX 4060 Laptop", "capability":"sm_89", "cuda":"cu121",
+                        "torch":">=2.1,<2.6", "indexUrl":"https://download.pytorch.org/whl/cu121",
+                        "python":"<paths.python>", "reason":"Ada 架构，官方 cu121 轮子直接支持" },
+    "torchInstallCommand": "<paths.python> -m pip install torch --index-url https://download.pytorch.org/whl/cu121"
+
+引擎没给这两项时（旧版本），插件返回 `null` 并提示按上表自己选，不会瞎推荐。
 
 ### 为什么本仓库要打补丁
 
@@ -151,6 +174,14 @@
 - 如果报 `ModuleNotFoundError: No module named 'torch'`，是解释器用错了——换 `paths.python` 那个再跑。
 
 `cover_doctor` 里的 `torch_cuda` 项就是按这条思路判的：它会把 torch 版本、CUDA 是否可用、卡名一起报出来。
+
+## 素材怎么给（好球曲）
+
+- **选填**。每条可以是**歌名**（例：言っちゃいけないことばっか浮かぶよな），也可以是**完整路径**（例：D:/素材/xxx.wav），还能混着填。
+- 填歌名的解析顺序：① 在你给的素材目录里按文件名找 → ② 允许联网（`refSearch: true` + `copyrightAck: true`）时去 B 站搜并下载 → ③ 仍失败就**忽略这一条并提示**，不中断 job。
+- 填路径（含 / 或反斜杠、或盘符）才校验存在性：写错报 `REF_NOT_FOUND`，message 标出「第几行」。
+- 最多 20 条，超出报 `REF_TOO_MANY`；留空就让引擎从素材目录自动筛。
+- 联网搜好球曲属于联网行为，和抓取模式一样要版权确认：`cover_setup` 未确认时返回 `needsConfirm`（reason `REF_SEARCH_NEEDS_ACK`），不建 job。
 
 ## 为什么不把依赖打包进仓库
 

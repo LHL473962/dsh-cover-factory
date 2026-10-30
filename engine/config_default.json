@@ -19,7 +19,7 @@
     "room_ir": "<DATA_DIR>/out/tuning/room_ir.wav",
     "export_dir": "",
     "ytdlp_python": "python",
-    "ytdlp_python_fallbacks": ["C:/Users/yourname/.dsh/bili-humanism/venv-frames/Scripts/python.exe"],
+    "ytdlp_python_fallbacks": [],
     "bankDir": "<DATA_DIR>/house/banks/",
     "nvidia_smi": "",
     "msst_inference": "",

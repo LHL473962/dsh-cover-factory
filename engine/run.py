@@ -242,6 +242,8 @@ def cmd_init(args):
         "mode": mode,
         "sources": sources,
         "refs": refs_norm,
+        "songs": [],
+        "warnings": [],
         "target": target_path,
         "target_meta": (dict(target_meta) if target_meta else None),
         "options": options,
@@ -267,6 +269,8 @@ def cmd_init(args):
                 if isinstance(rec, dict) and rec.get("status") in ("done", "skipped", "failed", "cancelled", "running"):
                     job["stages"][name] = rec
             job["refs"] = prev.get("refs") or job["refs"]
+            job["songs"] = prev.get("songs") or job.get("songs") or []
+            job["warnings"] = prev.get("warnings") or []
             job["target_meta"] = prev.get("target_meta") or job["target_meta"]
             job["createdAt"] = prev.get("createdAt") or job["createdAt"]
             job["cancelled"] = bool(prev.get("cancelled"))
@@ -974,6 +978,8 @@ def cmd_delete(args):
 def cmd_doctor(args):
     from setup import checks
     cfg = checks.load_config(getattr(args, "config", "") or None)
+    if getattr(args, "python", ""):
+        cfg.setdefault("paths", {})["python"] = args.python
     payload = checks.doctor_payload(cfg)
     say(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if payload.get("ok") else 1
@@ -981,7 +987,21 @@ def cmd_doctor(args):
 
 def cmd_setup(args):
     from setup import bootstrap
-    argv = ["--install"] if getattr(args, "install", False) else ["--check"]
+    argv = []
+    if getattr(args, "install_torch", False):
+        argv.append("--install-torch")
+        if getattr(args, "install", False):
+            argv.append("--install")
+    elif getattr(args, "install", False):
+        argv.append("--install")
+    else:
+        argv.append("--check")
+    if getattr(args, "python", ""):
+        argv.extend(["--python", args.python])
+    if getattr(args, "dry_run", False):
+        argv.append("--dry-run")
+    if getattr(args, "yes", False):
+        argv.append("--yes")
     cfg = getattr(args, "config", "") or ""
     if cfg:
         argv.extend(["--config", cfg])
@@ -1036,10 +1056,16 @@ def main(argv=None):
 
     p_doctor = sub.add_parser("doctor", help="依赖体检（JSON；缺项退出码 1）")
     p_doctor.add_argument("--config", default="", help="引擎配置覆盖 JSON（paths 覆盖）")
+    p_doctor.add_argument("--python", default="", help="指定检查用的 Python（覆盖 paths.python）")
 
     p_setup = sub.add_parser("setup", help="依赖检查/安装（bootstrap）")
     p_setup.add_argument("--check", action="store_true", help="只检测（默认）")
-    p_setup.add_argument("--install", action="store_true", help="尝试自动安装能自动装的部分")
+    p_setup.add_argument("--install", action="store_true", help="尝试自动安装能自动装的部分（或作为 install-torch 的确认）")
+    p_setup.add_argument("--install-torch", dest="install_torch", action="store_true",
+                         help="按显卡 capability 安装对应 torch（默认 dry-run）")
+    p_setup.add_argument("--python", default="", help="目标 Python 解释器（默认 paths.python）")
+    p_setup.add_argument("--dry-run", dest="dry_run", action="store_true", help="只打印 pip 命令")
+    p_setup.add_argument("--yes", action="store_true", help="确认真执行安装")
     p_setup.add_argument("--config", default="")
 
     args = parser.parse_args(argv)

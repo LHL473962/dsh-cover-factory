@@ -32,8 +32,20 @@ window.__ModuleLoader__.load({
       '磁盘需要预留 ≥ 10G（素材 + 切片 + 特征 + 模型）。',
       '显存 <5G 会先停下来让你选：减步数 或 加 --allow-lowmem（引擎侧放行，唯一的硬件硬闸）；5–8G 只警告，继续跑。',
       '没有可用 GPU 会走 CPU，慢约 10 倍（9000 步约 9 小时）。',
-      'RTX 50 系（Blackwell）必须用 torch cu128 的版本（2.8.0+cu128）：官方旧 torch 没有 sm_120 内核，跑不了。',
+      'RTX 50 系必须用 torch cu128；30/40 系用 cu118/cu121；插件会按你的显卡自动推荐（设置页体检展开可看，命令可直接复制）。',
     ]
+
+    // 复制安装命令：优先剪贴板 API，失败就提示手动选中
+    const copyText = async (text) => {
+      const t = String(text || '')
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(t)
+          return { ok: true }
+        }
+      } catch (e) { /* 落到下面的手动提示 */ }
+      return { ok: false, text: t }
+    }
 
     const asJson = async (res) => {
       let d = {}
@@ -103,7 +115,7 @@ window.__ModuleLoader__.load({
       const [jobs, setJobs] = React.useState([])
       const [msg, setMsg] = React.useState('')
       const [busy, setBusy] = React.useState('')
-      const [form, setForm] = React.useState({ singer: '', folder: '', target: '', refs: '', steps: 9000, mode: 'import', copyrightAck: false })
+      const [form, setForm] = React.useState({ singer: '', folder: '', target: '', refs: '', steps: 9000, mode: 'import', copyrightAck: false, refSearch: false })
       // 风险提示默认收起
       const [riskOpen, setRiskOpen] = React.useState(false)
       // 依赖体检：doctor 为 {ok, health, checks, missing, hints, message}
@@ -228,7 +240,9 @@ window.__ModuleLoader__.load({
           refs: refLines,
         }
         if (form.mode === 'import') body.folder = form.folder
-        if (form.mode === 'auto') body.copyrightAck = !!form.copyrightAck
+        body.refSearch = !!form.refSearch
+        // auto 抓取一直需要确认；import 只有要联网搜好球曲时才需要
+        if (form.mode === 'auto' || form.refSearch) body.copyrightAck = !!form.copyrightAck
         try {
           const d = await jpost('/jobs/create', body)
           if (d.needsConfirm) {
@@ -288,6 +302,33 @@ window.__ModuleLoader__.load({
                     ? h('div', { style: { marginTop: 8, color: '#F5A524' } }, '怎么装：')
                     : null,
                   (doctor.hints || []).map((t, i) => h('div', { key: 'h' + i, style: S.mono }, '· ' + t)),
+                  // 按显卡推荐的 torch + 一行可复制的安装命令
+                  doctor.suggestedTorch
+                    ? h('div', { style: { marginTop: 10, borderTop: '1px solid #24344A', paddingTop: 8 } },
+                      h('div', { style: { color: '#F5A524', fontWeight: 600 } },
+                        '你的显卡：' + (doctor.suggestedTorch.gpu || '未知') +
+                        (doctor.suggestedTorch.capability ? '（' + doctor.suggestedTorch.capability + '）' : '') +
+                        ' → 推荐 torch ' + (doctor.suggestedTorch.cuda || doctor.suggestedTorch.torch || '见下') +
+                        (doctor.suggestedTorch.cuda && doctor.suggestedTorch.torch ? '（' + doctor.suggestedTorch.torch + '）' : '')),
+                      doctor.suggestedTorch.reason
+                        ? h('div', { style: S.hint }, doctor.suggestedTorch.reason)
+                        : null,
+                      doctor.torchInstallCommand
+                        ? h('div', { style: S.mono }, doctor.torchInstallCommand)
+                        : null,
+                      doctor.torchInstallCommand
+                        ? h('button', {
+                          style: Object.assign({}, S.btnGhost, { marginTop: 6 }),
+                          onClick: async () => {
+                            const r = await copyText(doctor.torchInstallCommand)
+                            setMsg(r.ok ? '安装命令已复制到剪贴板' : '复制失败，请手动选中上面的命令：' + r.text)
+                          },
+                        }, '复制安装命令')
+                        : null,
+                      h('div', { style: { marginTop: 6, color: '#F5A524' } }, '约 2.5–3G；装错版本会跑不了（50 系尤其）。'),
+                    )
+                    : h('div', { style: { marginTop: 8, color: '#64748B' } },
+                      '引擎没给 torch 推荐（版本较旧）：按 ' + (doctor.install || 'docs/INSTALL.md') + ' 的显卡矩阵自己选 cu 版本。'),
                   h('div', { style: { marginTop: 8, color: '#64748B' } },
                     '完整安装路径（全自动 bootstrap / 半自动 / 已有环境指过去）见 ' + (doctor.install || 'docs/INSTALL.md') + '。'),
                 ),
@@ -301,15 +342,18 @@ window.__ModuleLoader__.load({
           h('div', { style: S.grid },
             h('div', { style: S.field },
               h('label', { style: S.label }, '引擎目录 engineDir'),
-              h('input', { style: S.input, value: st.engineDir || '', placeholder: '留空 = 插件自带 engine/', onChange: (e) => patch({ engineDir: e.target.value }) }),
+              h('input', { style: S.input, value: st.engineDir || '', onChange: (e) => patch({ engineDir: e.target.value }) }),
+              h('div', { style: S.hint }, '留空 = 插件自带 engine/ 目录'),
             ),
             h('div', { style: S.field },
               h('label', { style: S.label }, 'Python 解释器 python'),
-              h('input', { style: S.input, value: st.python || '', placeholder: '留空 = DSH_PYTHON → PATH 的 python', onChange: (e) => patch({ python: e.target.value }) }),
+              h('input', { style: S.input, value: st.python || '', onChange: (e) => patch({ python: e.target.value }) }),
+              h('div', { style: S.hint }, '留空 = 环境变量 DSH_PYTHON → PATH 里的 python'),
             ),
             h('div', { style: S.field },
               h('label', { style: S.label }, '成品输出目录 outputDir'),
               h('input', { style: S.input, value: st.outputDir || '', onChange: (e) => patch({ outputDir: e.target.value }) }),
+              h('div', { style: S.hint }, '默认 桌面/翻唱工厂；成品 mp3 与报告都放这里'),
             ),
             h('div', { style: S.field },
               h('label', { style: S.label }, '默认训练步数 defaultSteps'),
@@ -391,7 +435,8 @@ window.__ModuleLoader__.load({
         h('div', { style: S.grid },
           h('div', { style: S.field },
             h('label', { style: S.label }, '歌手名（必填）'),
-            h('input', { style: S.input, value: form.singer, placeholder: '例：刘德华', onChange: (e) => setForm(Object.assign({}, form, { singer: e.target.value })) }),
+            h('input', { style: S.input, value: form.singer, onChange: (e) => setForm(Object.assign({}, form, { singer: e.target.value })) }),
+            h('div', { style: S.hint }, '例：刘德华；决定声库名与成品文件名'),
           ),
           h('div', { style: S.field },
             h('label', { style: S.label }, '模式'),
@@ -402,12 +447,14 @@ window.__ModuleLoader__.load({
           form.mode === 'import'
             ? h('div', { style: S.field },
               h('label', { style: S.label }, '素材目录（只读）'),
-              h('input', { style: S.input, value: form.folder, placeholder: 'D:/…/素材文件夹', onChange: (e) => setForm(Object.assign({}, form, { folder: e.target.value })) }),
+              h('input', { style: S.input, value: form.folder, onChange: (e) => setForm(Object.assign({}, form, { folder: e.target.value })) }),
+              h('div', { style: S.hint }, '例：D:/素材/某某歌手；插件只读，不删不改'),
             )
             : null,
           h('div', { style: S.field },
             h('label', { style: S.label }, '目标曲路径'),
-            h('input', { style: S.input, value: form.target, placeholder: 'D:/…/目标曲.wav', onChange: (e) => setForm(Object.assign({}, form, { target: e.target.value })) }),
+            h('input', { style: S.input, value: form.target, onChange: (e) => setForm(Object.assign({}, form, { target: e.target.value })) }),
+            h('div', { style: S.hint }, '例：D:/素材/目标曲.wav；不填只能训到 train，出不了成品'),
           ),
           h('div', { style: S.field },
             h('label', { style: S.label }, '训练步数'),
@@ -417,24 +464,43 @@ window.__ModuleLoader__.load({
             h('div', { style: S.hint }, ETA_HINT),
           ),
           h('div', { style: { flex: '1 1 100%' } },
-            h('label', { style: S.label }, '好球曲（音色参考，可选）'),
+            h('label', { style: S.label }, '好球曲（选填）'),
             h('textarea', {
               style: S.textarea,
               value: form.refs,
-              placeholder: '一行一个文件的完整路径，例如：\n<DATA_DIR>/sep_yours/yours/Vocals.wav\n<DATA_DIR>/sep_yours/song2/Vocals.wav',
               onChange: (e) => setForm(Object.assign({}, form, { refs: e.target.value })),
             }),
             h('div', { style: S.hint },
-              '好球曲 = 最能代表你想听的那种音色的几首（建议 2–5 首）；留空则用素材目录里自动筛。',
+              '好球曲 = 最能代表你想听的那种音色的几首（建议 2–5 首），选填；留空则用素材目录里自动筛。',
               h('br'),
-              '从素材目录里挑：把文件完整路径一行一个粘进来（浏览器读不到本地路径，需要手填）；最多 20 条，路径必须存在。',
+              '可以填歌名：言っちゃいけないことばっか浮かぶよな',
+              h('br'),
+              '也可以填完整路径：D:/.../xxx.wav（一行一个，歌名路径可混填；最多 20 条）',
+              h('br'),
+              '填歌名时会在素材目录里自动找；找不到会忽略并提示，不会中断。写了路径就必须存在。',
             ),
+            h('label', { style: S.check },
+              h('input', {
+                type: 'checkbox',
+                checked: !!form.refSearch,
+                onChange: (e) => setForm(Object.assign({}, form, { refSearch: e.target.checked, copyrightAck: e.target.checked ? form.copyrightAck : false })),
+              }),
+              h('span', null, '好球曲找不到时联网搜索（需要版权确认）'),
+            ),
+            form.refSearch
+              ? h('div', { style: S.hint },
+                '本地素材目录里找不到的歌名，会去 B 站搜并下载；仍然失败就忽略（不会中断）。',
+                form.mode === 'import' ? h('span', { style: { color: '#F5A524' } }, ' 需要同时确认抓取风险：勾选下面的版权确认。') : null,
+              )
+              : h('div', { style: S.hint }, '默认只在你给的素材目录里找；勾选后才会联网补。'),
           ),
         ),
-        form.mode === 'auto'
+        (form.mode === 'auto' || form.refSearch)
           ? h('label', { style: S.check },
             h('input', { type: 'checkbox', checked: !!form.copyrightAck, onChange: (e) => setForm(Object.assign({}, form, { copyrightAck: e.target.checked })) }),
-            h('span', null, '我确认：抓取会联网搜索并下载音频，可能触发平台风控，版权风险自负。不勾选只会得到风险提示，不会建 job、不会下载。'),
+            h('span', null, (form.mode === 'auto'
+              ? '我确认：抓取会联网搜索并下载音频'
+              : '我确认：好球曲会联网搜索并下载音频') + '，可能触发平台风控，版权风险自负。不勾选只会得到风险提示，不会建 job、不会下载。'),
           )
           : h('div', { style: S.muted }, '导入模式：素材来自你自己的文件夹，插件只读不删。'),
         h('div', { style: S.risk },

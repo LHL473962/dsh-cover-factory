@@ -58,8 +58,12 @@ options / stages / result / cancelled（决策时另有 decision）。
 每个 stage 记录：status（pending|running|done|failed|skipped|cancelled）、startedAt、
 finishedAt、artifacts、metrics、error、reason、log、inputHash。
 
-refs：兼容两种写法 —— 插件传的**字符串路径数组**（如 ["D:/x/a.wav", ...]），以及 fetch 跑完后归一化的
-对象数组（{id,name,role,kind,path,source}）。select/dataset/train 都通过 stages/base.songs() 读，两种都认。
+refs：**选填**，支持路径与歌名混填（插件传字符串数组即可）。看起来像路径（含 / \ 或盘符）按路径；
+否则当歌名：先在 sources.folder（import）或已下载的 work/raw（auto）里按文件名/标题做不区分大小写的包含匹配，
+没匹配上且勾了版权确认（且 mode=auto 或 options.refSearch=true）时会**联网搜这首歌**并下载到 work/raw/refs/。
+fetch 后 job.refs 归一成 [{input, kind, matched:'local'|'search'|false, matchedPath, bvid?}]；没命中的写 warning 并忽略，
+全部没命中等于没填 refs（按默认权重）。dataset 只训练命中的好球曲（有命中时），权重 ×6 不变。
+select/dataset/train 的素材列表通过 stages/base.songs() 读（job.songs，兼容老 job 的 job.refs）。
 
 ## stage 状态
 
@@ -142,8 +146,28 @@ capability 的 `sm_XX` 不在 arch_list 里 = 这个 torch 轮子没有该卡的
 | RTX 20 系及更老 | sm_75 / 更早 | 可用但慢 | FP16 支持差，建议降步数 |
 | 无独显 | — | CPU 回退 | 约 10 倍慢（`gpu_torch_match` 标 optional） |
 
-> 旧版 RVC（2.2.231006）在 torch>=2.6 下需要补丁：`av` 依赖、`torch.load(..., weights_only=...)`、`index_root` 环境变量；
-> 30/40 系继续用旧 torch（<2.6）可以不打；50 系必须新 torch（cu128），所以需要补丁（本机 old_rvc 已能跑）。
+> 旧版 RVC（2.2.231006）的三处兼容补丁（`av` 依赖、`torch.load(..., weights_only=...)`、`index_root` 环境变量）
+> 在新旧 torch 下都兼容，所以**同一套引擎代码 30/40/50 通吃**（本机 old_rvc 已打补丁）。
+
+### 自动识别 + 一键装对应 torch
+
+    python engine/run.py setup --install-torch                     # 默认 dry-run：只打印命令，不下载
+    python engine/run.py setup --install-torch --yes               # 真装（约 2.5–3G）
+    python engine/run.py setup --install-torch --python D:/Apps/rvc-env/python.exe --yes
+    python engine/setup/bootstrap.py --install-torch --python <exe> --yes
+
+doctor 的 `gpu_torch_match` 会带 `suggestedTorch`（按 capability 自动选）：
+
+| capability | index | torch 版本 |
+| --- | --- | --- |
+| sm_120（50 系） | https://download.pytorch.org/whl/cu128 | torch>=2.7 |
+| sm_89（40 系） | https://download.pytorch.org/whl/cu121（备选 cu118） | torch 2.1–2.5 |
+| sm_86（30 系） | https://download.pytorch.org/whl/cu118 | torch 2.0–2.1 |
+| sm_75 及更老 | https://download.pytorch.org/whl/cu118 | torch 2.0–2.1 |
+| 无 CUDA | （无） | CPU 版，训练约慢 10 倍 |
+
+默认只打印命令；必须 `--yes`（或 `--install`）才真正执行 `<python> -m pip install torch --index-url <index>`。
+**装错 cu 版本会报 no kernel image，GPU 训练直接跑不了**；doctor 也支持 `--python <exe>` 指定检查环境。
 
 只算 train 的耗时（0.37 秒/步，RTX 5060 Laptop 8G，train 显存占用约 7.5G）：
 
@@ -188,7 +212,7 @@ capability 的 `sm_XX` 不在 arch_list 里 = 这个 torch 轮子没有该卡的
 | 依赖 | 能不能自动装 | 说明 |
 | --- | --- | --- |
 | Python 3.10+ | 手动 | python.org 安装；torch 环境建议独立 venv |
-| torch + CUDA | 手动 | 按显卡/驱动选 CUDA 版本：`python -m pip install torch --index-url https://download.pytorch.org/whl/cu128` |
+| torch + CUDA | 自动（`setup --install-torch`，默认 dry-run）或手动 | 按显卡 capability 自动选 cu128/cu121/cu118；确认执行加 `--yes`，体积约 2.5–3G |
 | ffmpeg | 自动（pip imageio-ffmpeg）或手动 | bootstrap 装完会给出可执行文件路径，把它写进 `paths.ffmpeg`；失败则从 https://www.gyan.dev/ffmpeg/builds/ 下载 |
 | yt-dlp | 自动（pip，在 `paths.ytdlp_python` 环境里） | 只有 fetch search 抓取模式需要；import 模式不联网 |
 | MSST 代码 + MelBand kim 权重 | 代码可手动 clone；权重**不自动下** | `git clone https://github.com/ZFTurbo/Music-Source-Separation-Training`；权重按模型页/许可自行下载放 `pretrain/`，再配 `paths.msst_*` |

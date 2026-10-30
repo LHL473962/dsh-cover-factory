@@ -18,6 +18,9 @@ import http.cookiejar
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -85,28 +88,195 @@ def _is_search(sources):
     return bool(str(sources.get("search") or sources.get("query") or "").strip())
 
 
+def _looks_like_path(text):
+    t = str(text or "").strip()
+    if not t:
+        return False
+    if "/" in t or "\\" in t:
+        return True
+    return bool(re.match(r"^[A-Za-z]:", t))
+
+
+def _ref_specs(job):
+    """把 job.refs 归一成 [{input, kind}]；kind=path|name。"""
+    specs = []
+    for item in job.get("refs") or []:
+        if isinstance(item, str):
+            text = item.strip()
+            if not text:
+                continue
+            specs.append({"input": text, "kind": "path" if _looks_like_path(text) else "name"})
+        elif isinstance(item, dict):
+            text = str(item.get("input") or item.get("path") or item.get("source")
+                       or item.get("name") or "").strip()
+            if not text:
+                continue
+            kind = item.get("kind")
+            if kind not in ("path", "name"):
+                kind = "path" if _looks_like_path(text) else "name"
+            specs.append({"input": text, "kind": kind})
+    return specs
+
+
+def _pool_names(path):
+    base_name = os.path.basename(path)
+    stem = os.path.splitext(base_name)[0]
+    names = [stem, base_name]
+    out = []
+    for name in names:
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _norm_path(path):
+    return os.path.normcase(os.path.abspath(str(path or "")))
+
+
+def _match_local(spec, pool):
+    if spec["kind"] == "path":
+        target = _norm_path(spec["input"])
+        for item in pool:
+            if _norm_path(item["path"]) == target:
+                return item["path"]
+        return ""
+    query = spec["input"].strip().lower()
+    if not query:
+        return ""
+    best, best_len = "", -1
+    for item in pool:
+        for name in item["names"]:
+            low = str(name).lower()
+            if query in low and len(name) > best_len:
+                best, best_len = item["path"], len(name)
+    return best
+
+
+def _attach_raw(job, resolved, source_to_out):
+    for entry in resolved:
+        if not entry.get("matched"):
+            continue
+        out = source_to_out.get(_norm_path(entry.get("matchedPath")))
+        if out:
+            entry["rawPath"] = base.rel(job, out)
+    return resolved
+
+
+def _search_ref_online(job, cfg, name):
+    """用现有 B站搜索 + yt-dlp 下载函数给未匹配的歌名找一条音频，存到 work/raw/refs/。"""
+    base.log("fetch: 联网搜索好球曲：%s" % name)
+    try:
+        ff = audio.find_ffmpeg(cfg.get("paths"))
+    except Exception as exc:  # noqa: BLE001
+        base.log("fetch: 联网搜索好球曲失败（ffmpeg 不可用）：%s" % exc)
+        return None
+    results, search_err = _search_videos(name, cfg)
+    if search_err:
+        base.log("fetch: 好球曲「%s」搜索失败：%s" % (name, search_err))
+        return None
+    fcfg = cfg.get("fetch") or {}
+    min_dur = float(fcfg.get("min_duration_sec", 60))
+    max_dur = float(fcfg.get("max_duration_sec", 480))
+    exclude_keywords = list(fcfg.get("exclude_title_keywords") or [])
+    query = name.strip().lower()
+    raw_dir = base.work(job, "raw")
+    refs_dir = os.path.join(raw_dir, "refs")
+    base.ensure_dir(refs_dir)
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        bvid = str(item.get("bvid") or "").strip()
+        title = _clean_title(item.get("title"))
+        dur = _duration_sec(item.get("duration"))
+        if not bvid or not (min_dur <= dur <= max_dur):
+            continue
+        if _title_excluded(title, exclude_keywords):
+            continue
+        if query and query not in title.lower():
+            continue
+        src, why = _download_one(ff, cfg, bvid, title, 1, raw_dir, out_dir=refs_dir, prefix="refsearch")
+        if not src:
+            base.log("fetch: 好球曲「%s」下载失败：%s" % (name, why))
+            return None
+        return {
+            "path": os.path.abspath(src),
+            "bvid": bvid,
+            "title": title,
+            "sourceUrl": "https://www.bilibili.com/video/" + bvid,
+        }
+    return None
+
+
+def _resolve_refs(job, cfg, specs, pool, allow_search, search_wanted):
+    """本地模糊匹配优先；未命中且允许联网时搜/下一条；结果写 normalized entries。"""
+    resolved, warnings = [], []
+    prev = {}
+    for item in job.get("refs") or []:
+        if isinstance(item, dict) and item.get("input"):
+            prev[str(item["input"])] = item
+
+    for spec in specs:
+        text = spec["input"]
+        entry = {"input": text, "kind": spec["kind"], "matched": False, "matchedPath": None}
+        local = _match_local(spec, pool)
+        if local:
+            entry["matched"] = "local"
+            entry["matchedPath"] = local
+            resolved.append(entry)
+            continue
+        if spec["kind"] == "name":
+            old = prev.get(text)
+            if old and old.get("matched") == "search" and base.file_ok(base.resolve(job, old.get("matchedPath") or "")):
+                entry = dict(old)
+                resolved.append(entry)
+                continue
+            if allow_search:
+                hit = _search_ref_online(job, cfg, text)
+                if hit:
+                    entry.update({
+                        "matched": "search",
+                        "matchedPath": hit["path"],
+                        "bvid": hit["bvid"],
+                        "title": hit["title"],
+                        "sourceUrl": hit["sourceUrl"],
+                    })
+                    resolved.append(entry)
+                    continue
+                warnings.append("好球曲「%s」联网没搜到合适的音频，已忽略" % text)
+            elif search_wanted:
+                warnings.append("好球曲「%s」需要联网搜索，请勾选版权确认或手动放素材" % text)
+            else:
+                warnings.append("好球曲「%s」没在素材里找到，已忽略" % text)
+        else:
+            warnings.append("好球曲「%s」不是有效音频文件，已忽略" % text)
+        resolved.append(entry)
+    for warning in warnings:
+        base.log("fetch: WARNING " + warning)
+    return resolved, warnings
+
+
+def _songs_from_plan(job, plan):
+    songs = [
+        {
+            "id": p["id"], "name": p["name"], "role": "ref", "kind": "ref",
+            "path": base.rel(job, p["out"]), "source": p["source"],
+        }
+        for p in plan if p["role"] == "ref"
+    ]
+    job["songs"] = songs
+    return songs
+
+
 # ------------------------------------------------------------------ import
 
 def _run_import(job, cfg):
     exts = _exts(cfg)
     sources = job.get("sources") or {}
-    ref_sources = []
-    for item in job.get("refs") or []:
-        if isinstance(item, str) and item.strip():
-            ref_sources.append(item.strip())
-        elif isinstance(item, dict):
-            p = item.get("path") or item.get("source") or item.get("file")
-            if p:
-                ref_sources.append(str(p))
-    folder = sources.get("folder") or sources.get("dir") or sources.get("path") or ""
-    if folder and folder not in ref_sources:
-        ref_sources.append(str(folder))
-
-    ref_files = []
-    for p in ref_sources:
-        for f in _list_audio(p, exts):
-            if f not in ref_files:
-                ref_files.append(f)
+    opts = job.get("options") or {}
+    specs = _ref_specs(job)
+    search_wanted = (str(job.get("mode") or "import").lower() == "auto"
+                     or bool(opts.get("refSearch")))
+    allow_search = bool(opts.get("copyrightAck")) and search_wanted
 
     target_src = _target_source(job)
     target_file = ""
@@ -118,22 +288,56 @@ def _run_import(job, cfg):
                 error="目标曲不存在或不是支持的音频文件: " + target_src,
             )
         target_file = found[0]
-        if target_file in ref_files:
-            ref_files.remove(target_file)
 
-    if not ref_files and not target_file:
+    folder = sources.get("folder") or sources.get("dir") or sources.get("path") or ""
+    folder_files = []
+    if folder:
+        for f in _list_audio(folder, exts):
+            if os.path.normcase(os.path.abspath(f)) != os.path.normcase(os.path.abspath(target_file or "")):
+                folder_files.append(f)
+
+    path_refs = []
+    for spec in specs:
+        if spec["kind"] != "path":
+            continue
+        for f in _list_audio(spec["input"], exts):
+            if os.path.normcase(os.path.abspath(f)) != os.path.normcase(os.path.abspath(target_file or "")):
+                path_refs.append(f)
+
+    pool = []
+    seen = set()
+    for f in folder_files + path_refs:
+        key = os.path.normcase(os.path.abspath(f))
+        if key in seen:
+            continue
+        seen.add(key)
+        pool.append({"path": os.path.abspath(f), "names": _pool_names(f)})
+
+    resolved, warnings = _resolve_refs(job, cfg, specs, pool, allow_search, search_wanted)
+    job["warnings"] = warnings
+
+    ref_sources = [item["path"] for item in pool]
+    for entry in resolved:
+        if entry.get("matched") == "search":
+            p = entry.get("matchedPath") or ""
+            key = os.path.normcase(os.path.abspath(p)) if p else ""
+            if p and key not in seen:
+                seen.add(key)
+                ref_sources.append(p)
+
+    if not ref_sources and not target_file:
         return base.result(
             "failed", [], {},
             error="没有可用素材：sources.folder / refs 里没找到音频文件（支持 " + ", ".join(exts) + "）",
         )
 
     max_songs = int((cfg.get("select") or {}).get("max_songs", 60))
-    ref_files = ref_files[:max_songs]
+    ref_sources = ref_sources[:max_songs]
     sr = int((cfg.get("audio") or {}).get("sample_rate", 44100))
     ch = int((cfg.get("audio") or {}).get("channels", 2))
 
     plan = []
-    for i, src in enumerate(ref_files):
+    for i, src in enumerate(ref_sources):
         stem = os.path.splitext(os.path.basename(src))[0]
         out = base.work(job, "raw", "ref_%02d_%s.wav" % (i + 1, _slug(stem)))
         plan.append({"role": "ref", "id": "ref_%02d" % (i + 1), "name": stem, "source": src, "out": out})
@@ -144,13 +348,14 @@ def _run_import(job, cfg):
         out = base.work(job, "raw", "target_%s.wav" % _slug(target_title))
         plan.append({"role": "target", "id": "target", "name": target_title, "source": target_file, "out": out})
 
-    job["refs"] = [
-        {
-            "id": p["id"], "name": p["name"], "role": "ref", "kind": "ref",
-            "path": base.rel(job, p["out"]), "source": p["source"],
-        }
-        for p in plan if p["role"] == "ref"
-    ]
+    source_to_out = {}
+    for p in plan:
+        if p["role"] == "ref":
+            source_to_out[_norm_path(p["source"])] = p["out"]
+    _attach_raw(job, resolved, source_to_out)
+    job["refs"] = resolved
+    _songs_from_plan(job, plan)
+
     if target_file:
         t = [p for p in plan if p["role"] == "target"][0]
         job["target_meta"] = {
@@ -160,8 +365,10 @@ def _run_import(job, cfg):
     else:
         job["target_meta"] = None
 
+    ref_count = len([p for p in plan if p["role"] == "ref"])
     params = {
         "sr": sr, "ch": ch,
+        "refs": specs,
         "plan": [{"role": p["role"], "source": p["source"], "out": os.path.basename(p["out"])} for p in plan],
     }
     inputs = [p["source"] for p in plan]
@@ -171,7 +378,7 @@ def _run_import(job, cfg):
         base.log("fetch: 产物已存在且输入未变，跳过")
         return base.result(
             "skipped", [base.rel(job, p) for p in outputs],
-            {"refs": len(ref_files), "target": bool(target_file), "files": len(plan)},
+            {"refs": ref_count, "target": bool(target_file), "files": len(plan)},
             reason="产物已存在且输入未变",
         )
 
@@ -185,10 +392,10 @@ def _run_import(job, cfg):
         if not base.file_ok(p["out"]):
             return base.result("failed", [], {"files": len(plan)}, error="转码后产物为空: " + p["out"])
 
-    base.log("fetch: 完成，%d 个文件（参考曲 %d，目标曲 %s）" % (len(plan), len(ref_files), target_file or "无"))
+    base.log("fetch: 完成，%d 个文件（参考曲 %d，目标曲 %s）" % (len(plan), ref_count, target_file or "无"))
     return base.result(
         "done", [base.rel(job, p) for p in outputs],
-        {"refs": len(ref_files), "target": bool(target_file), "files": len(plan), "mode": "import"},
+        {"refs": ref_count, "target": bool(target_file), "files": len(plan), "mode": "import"},
         input_hash=base.sig(job, inputs, params),
     )
 
@@ -278,12 +485,48 @@ def _title_excluded(title, keywords):
     return None
 
 
-def _download_one(ff, cfg, bvid, title, index, raw_dir):
+_YTDLP_CACHE = {}
+
+
+def _resolve_ytdlp_python(cfg):
+    """在 paths.ytdlp_python / fallbacks / paths.python 里找第一个能跑 -m yt_dlp 的解释器。"""
+    if _YTDLP_CACHE.get("py"):
+        return _YTDLP_CACHE["py"]
+    paths = cfg.get("paths") or {}
+    cands = []
+    for key in ("ytdlp_python", "python"):
+        if paths.get(key):
+            cands.append(str(paths[key]))
+    cands.extend(str(x) for x in (paths.get("ytdlp_python_fallbacks") or []))
+    cands.append(sys.executable)
+    seen = set()
+    found = ""
+    for cand in cands:
+        p = shutil.which(cand) or (cand if os.path.isfile(cand) else "")
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        try:
+            proc = subprocess.run(
+                [p, "-m", "yt_dlp", "--version"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if proc.returncode == 0:
+                found = p
+                break
+        except Exception:  # noqa: BLE001
+            continue
+    _YTDLP_CACHE["py"] = found
+    return found
+
+
+def _download_one(ff, cfg, bvid, title, index, raw_dir, out_dir=None, prefix="ref"):
     """下载单条音频；成功返回 (wav_path, None)，失败返回 (None, reason)。"""
     fcfg = cfg.get("fetch") or {}
-    ytdlp_py = (cfg.get("paths") or {}).get("ytdlp_python") or ""
-    if not ytdlp_py or not os.path.isfile(ytdlp_py):
-        return None, "paths.ytdlp_python 不存在: " + str(ytdlp_py)
+    ytdlp_py = _resolve_ytdlp_python(cfg)
+    if not ytdlp_py:
+        return None, "找不到可用的 yt-dlp（paths.ytdlp_python / fallbacks / 先 pip install yt-dlp）"
     tmp_dir = os.path.join(raw_dir, "_dl")
     base.ensure_dir(tmp_dir)
     url = "https://www.bilibili.com/video/" + bvid
@@ -308,7 +551,10 @@ def _download_one(ff, cfg, bvid, title, index, raw_dir):
 
     sr = int((cfg.get("audio") or {}).get("sample_rate", 44100))
     ch = int((cfg.get("audio") or {}).get("channels", 2))
-    dst = os.path.join(raw_dir, "ref_%02d_%s_%s.wav" % (index, bvid, _slug(title or bvid, "track")[:36]))
+    target_dir = out_dir or raw_dir
+    base.ensure_dir(target_dir)
+    dst = os.path.join(target_dir, "%s_%02d_%s_%s.wav" % (
+        prefix, index, bvid, _slug(title or bvid, "track")[:36]))
     try:
         audio.transcode(ff, src, dst, sr=sr, channels=ch)
     except Exception as exc:  # noqa: BLE001
@@ -347,10 +593,10 @@ def _ensure_target(job, cfg, ff):
     return job["target_meta"]
 
 
-def _set_refs(job, used):
-    refs = []
+def _set_songs(job, used):
+    songs = []
     for i, entry in enumerate(used, 1):
-        refs.append({
+        songs.append({
             "id": "ref_%02d" % i,
             "name": entry.get("title") or entry.get("bvid") or ("ref_%02d" % i),
             "role": "ref",
@@ -359,8 +605,43 @@ def _set_refs(job, used):
             "path": entry.get("localPath"),
             "source": entry.get("sourceUrl"),
         })
-    job["refs"] = refs
-    return refs
+    job["songs"] = songs
+    return songs
+
+
+def _materialize_search_refs(job, cfg, resolved, songs):
+    """把联网搜到的好球曲（work/raw/refs/）转成正式素材，追加进 songs。"""
+    refs = [r for r in resolved if r.get("matched") == "search" and r.get("matchedPath")]
+    if not refs:
+        return songs
+    ff = audio.find_ffmpeg(cfg.get("paths"))
+    sr = int((cfg.get("audio") or {}).get("sample_rate", 44100))
+    ch = int((cfg.get("audio") or {}).get("channels", 2))
+    for entry in refs:
+        src = base.resolve(job, entry.get("matchedPath") or "")
+        if not base.file_ok(src):
+            entry["matched"] = False
+            continue
+        idx = len(songs) + 1
+        out = base.work(job, "raw", "ref_%02d_%s.wav" % (
+            idx, _slug(entry.get("title") or entry.get("input"))[:36]))
+        try:
+            audio.transcode(ff, src, out, sr=sr, channels=ch)
+        except Exception as exc:  # noqa: BLE001
+            base.log("fetch: 好球曲转码失败，忽略：%s" % exc)
+            entry["matched"] = False
+            continue
+        entry["rawPath"] = base.rel(job, out)
+        songs.append({
+            "id": "ref_%02d" % idx,
+            "name": entry.get("title") or entry.get("input"),
+            "role": "ref",
+            "kind": "ref",
+            "path": base.rel(job, out),
+            "source": entry.get("sourceUrl") or src,
+            "bvid": entry.get("bvid"),
+        })
+    return songs
 
 
 # ------------------------------------------------------------------ search：主流程
@@ -391,17 +672,31 @@ def _run_search(job, cfg, sources):
     raw_dir = base.work(job, "raw")
     base.ensure_dir(raw_dir)
     report_path = os.path.join(raw_dir, "fetch_report.json")
+    specs = _ref_specs(job)
+    allow_search = bool(opts.get("copyrightAck"))
+    search_wanted = True
     params = {
         "mode": "search", "keyword": keyword, "limit": limit, "author": author,
         "api": str(fcfg.get("search_api") or DEFAULT_SEARCH_API),
         "minDuration": min_dur, "maxDuration": max_dur, "exclude": exclude_keywords,
+        "refs": specs,
     }
 
     if base.recon(job, STAGE, [], params, [report_path]):
         rep = base.read_json(report_path, {}) or {}
         used = [s for s in (rep.get("songs") or []) if s.get("used") and base.file_ok(base.resolve(job, s.get("localPath") or ""))]
         if used:
-            _set_refs(job, used)
+            songs = _set_songs(job, used)
+            for extra in rep.get("ref_downloads") or []:
+                if extra.get("songPath") and base.file_ok(base.resolve(job, extra["songPath"])):
+                    songs.append({
+                        "id": "ref_%02d" % (len(songs) + 1),
+                        "name": extra.get("title") or extra.get("input") or "ref",
+                        "role": "ref", "kind": "ref",
+                        "path": extra.get("songPath"),
+                        "source": extra.get("sourceUrl") or "",
+                        "bvid": extra.get("bvid"),
+                    })
             base.log("fetch: fetch_report.json 已存在且输入未变，跳过")
             return base.result(
                 "skipped",
@@ -492,14 +787,36 @@ def _run_search(job, cfg, sources):
     base.write_json(report_path, report)
 
     if used:
-        _set_refs(job, used)
+        songs = _set_songs(job, used)
+        pool = []
+        for entry in used:
+            p = base.resolve(job, entry.get("localPath") or "")
+            names = [entry.get("title") or "", os.path.basename(p), os.path.splitext(os.path.basename(p))[0]]
+            pool.append({"path": os.path.abspath(p), "names": [n for n in names if n]})
+        resolved, ref_warnings = _resolve_refs(job, cfg, specs, pool, allow_search, search_wanted)
+        songs = _materialize_search_refs(job, cfg, resolved, songs)
+        job["refs"] = resolved
+        job["warnings"] = ref_warnings
+        report["ref_downloads"] = [
+            {
+                "input": r.get("input"),
+                "bvid": r.get("bvid"),
+                "title": r.get("title"),
+                "sourceUrl": r.get("sourceUrl"),
+                "refPath": base.rel(job, r.get("matchedPath")) if r.get("matchedPath") else "",
+                "songPath": r.get("rawPath") or "",
+            }
+            for r in resolved if r.get("matched") == "search" and r.get("rawPath")
+        ]
+        base.write_json(report_path, report)
         target = _ensure_target(job, cfg, ff)
         base.log("fetch: 搜索完成，%d 首可用（候选 %d，下载失败 %d）" % (
             len(used), len(matched_all), len(failures)))
         return base.result(
             "done",
             [base.rel(job, report_path)] + [s["localPath"] for s in used],
-            dict(report["counts"], keyword=keyword, mode="search", target=bool(target)),
+            dict(report["counts"], keyword=keyword, mode="search", target=bool(target),
+                 refSearch=len(report["ref_downloads"])),
             input_hash=base.sig(job, [], params),
         )
 

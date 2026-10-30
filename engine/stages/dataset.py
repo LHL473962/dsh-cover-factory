@@ -20,6 +20,21 @@ def run(job, cfg):
     if not rep:
         return base.result("failed", [], {}, error="没有 select/report.json：先跑 select")
     kept = [s for s in (rep.get("songs") or []) if s.get("role") == "ref" and s.get("kept")]
+    matched_raw = base.matched_ref_raw_paths(job)
+    if matched_raw:
+        subset = []
+        for s in kept:
+            raw = base.resolve(job, s.get("file") or "")
+            if os.path.normcase(os.path.abspath(raw)) in matched_raw:
+                subset.append(s)
+        if subset:
+            kept = subset
+            ref_w = float((cfg.get("select") or {}).get("ref_weight", 6.0))
+            for s in kept:
+                s["weight"] = ref_w
+            base.log("dataset: 只使用命中的好球曲 %d 首（权重 %s）" % (len(kept), ref_w))
+        else:
+            base.log("dataset: 命中的好球曲都被 select 排除，回退到全部入选素材")
     if not kept:
         return base.result("failed", [], {}, error="没有入选参考曲：先看 select 报告")
 

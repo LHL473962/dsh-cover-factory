@@ -47,8 +47,8 @@ const ctx = {
   },
 }
 
-import { doctorBlockCreate, normalizeDoctor } from '../lib/doctor.js'
-import { buildJobConfig, etaText } from '../lib/tools.js'
+import { doctorBlockCreate, normalizeDoctor, normalizeTorchSuggestion } from '../lib/doctor.js'
+import { buildJobConfig, classifyRefs, etaText } from '../lib/tools.js'
 import { isAlive } from '../lib/util.js'
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
@@ -244,6 +244,38 @@ await check('buildJobConfig：import 模式忽略 search/limit/copyrightAck', ()
   assert.equal(c.options.shift, 2)
 })
 
+await check('refSearch：默认 false，job 配置里不出现 refSearch', () => {
+  const c = buildJobConfig({ singer: '测试', mode: 'import', folder: 'F', refs: ['歌名'], steps: 9000 })
+  assert.equal(c.options.refSearch, undefined, '默认不该写 refSearch')
+  assert.equal(c.options.copyrightAck, undefined, '默认 import 不该写 copyrightAck')
+  assert.equal(byName('cover_setup').parameters.properties.refSearch.type, 'boolean')
+  assert.equal(byName('cover_setup').parameters.required.includes('refSearch'), false)
+})
+
+await check('refSearch=true 但没版权确认 -> needsConfirm，不建 job', async () => {
+  const r = await call('cover_setup', { singer: '测试', folder: HOME, refs: ['某首歌名'], refSearch: true })
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.equal(r.needsConfirm, true)
+  assert.equal(r.jobCreated, false)
+  assert.equal(r.reason, 'REF_SEARCH_NEEDS_ACK')
+  assert.equal(r.jobId, undefined, '未确认不该建 job')
+  assert.ok(r.warnings.join(' ').includes('好球曲'), JSON.stringify(r.warnings))
+  assert.ok(r.warnings.join(' ').includes('版权'), JSON.stringify(r.warnings))
+  assert.ok(String(r.next).includes('copyrightAck:true'), r.next)
+})
+
+await check('refSearch=true + copyrightAck=true -> 过闸（引擎缺失时停在 ENGINE_NOT_READY）', async () => {
+  const r = await call('cover_setup', { singer: '测试', folder: HOME, refs: ['某首歌名'], refSearch: true, copyrightAck: true })
+  assert.equal(r.error, 'ENGINE_NOT_READY', JSON.stringify(r))
+})
+
+await check('refSearch：确认后 job 配置写 options.refSearch=true（import 同时写 copyrightAck）', () => {
+  const c = buildJobConfig({ singer: '测试', mode: 'import', folder: 'F', refs: ['歌名'], refSearch: true, copyrightAck: true, steps: 9000 })
+  assert.equal(c.options.refSearch, true)
+  assert.equal(c.options.copyrightAck, true)
+  assert.deepEqual(c.refs, ['歌名'], '歌名要原样进 job_config.refs')
+})
+
 // ── 3.3 依赖体检：normalizeDoctor / doctorBlockCreate（纯函数，不启引擎）──
 await check('normalizeDoctor：全绿 -> green，missing 为空，不拦建任务', () => {
   const d = normalizeDoctor({
@@ -295,6 +327,78 @@ await check('normalizeDoctor：只缺可选 -> yellow，不拦建任务', () => 
   assert.equal(doctorBlockCreate({ ok: true, health: d.health, ...d }).block, false)
 })
 
+await check('suggestedTorch：引擎真实 plan（嵌在 gpu_torch_match 里）也能取到', () => {
+  const d = normalizeDoctor({
+    checks: [
+      { name: 'torch_cuda', ok: true, found: 'torch 2.8.0+cu128' },
+      {
+        name: 'gpu_torch_match', ok: false,
+        found: 'RTX 4060 Laptop (sm_89) NOT in arch_list [sm_86,sm_90]',
+        hint: '当前 torch 不含该架构，需换 cu 版本',
+        suggestedTorch: {
+          index: 'https://download.pytorch.org/whl/cu121',
+          torch: 'torch 2.1–2.5',
+          pip: 'D:/Apps/rvc-env/python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu121',
+          gpu: 'RTX 4060 Laptop', capability: 'sm_89',
+          note: '40 系官方旧版 cu121 / cu118 都可用',
+          alternatives: [{ index: 'https://download.pytorch.org/whl/cu118', torch: 'torch 2.1–2.5' }],
+        },
+      },
+    ],
+  })
+  assert.equal(d.suggestedTorch.cuda, 'cu121', 'index URL 要归一成 cu121')
+  assert.equal(d.suggestedTorch.capability, 'sm_89')
+  assert.equal(d.suggestedTorch.torch, 'torch 2.1–2.5')
+  assert.equal(d.suggestedTorch.reason, '40 系官方旧版 cu121 / cu118 都可用')
+  assert.equal(d.suggestedTorch.alternatives[0].indexUrl, 'https://download.pytorch.org/whl/cu118')
+  assert.equal(d.torchInstallCommand, 'D:/Apps/rvc-env/python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu121')
+  // gpu_torch_match 缺卡架构 → 应判红（不是随便装个 torch 就行）
+  assert.equal(d.health, 'red')
+  assert.ok(d.missingRequired.includes('gpu_torch_match'), JSON.stringify(d.missingRequired))
+})
+
+await check('suggestedTorch 透传：字段归一 + 命令按 python/indexUrl 自动拼', () => {
+  const d = normalizeDoctor({
+    ok: false,
+    checks: [{ name: 'torch_cuda', ok: false, found: 'torch 没装' }],
+    suggestedTorch: {
+      gpu: 'RTX 4060 Laptop', capability: 'sm_89', cu: 'cu121',
+      versions: '>=2.1,<2.6', index_url: 'https://download.pytorch.org/whl/cu121',
+      python_path: 'D:/Apps/rvc-env/python.exe',
+    },
+  })
+  assert.equal(d.suggestedTorch.gpu, 'RTX 4060 Laptop')
+  assert.equal(d.suggestedTorch.capability, 'sm_89')
+  assert.equal(d.suggestedTorch.cuda, 'cu121')
+  assert.equal(d.suggestedTorch.torch, '>=2.1,<2.6')
+  assert.equal(d.suggestedTorch.indexUrl, 'https://download.pytorch.org/whl/cu121')
+  assert.equal(d.torchInstallCommand, 'D:/Apps/rvc-env/python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu121')
+  assert.equal(d.torchSuggestionMissing, false)
+})
+
+await check('torchInstallCommand 显式给出时原样透传', () => {
+  const d = normalizeDoctor({
+    checks: [{ name: 'torch_cuda', ok: true }],
+    suggestedTorch: { gpu: 'RTX 5060', capability: 'sm_120', cuda: 'cu128' },
+    torchInstallCommand: 'X -m pip install torch --index-url U',
+  })
+  assert.equal(d.torchInstallCommand, 'X -m pip install torch --index-url U')
+  assert.equal(d.torchSuggestionMissing, false)
+})
+
+await check('suggestedTorch 缺失降级：null + 提示按 INSTALL 矩阵（torch 正常时不硬塞）', () => {
+  const bad = normalizeDoctor({ checks: [{ name: 'torch_cuda', ok: false, found: 'cpu only' }] })
+  assert.equal(bad.suggestedTorch, null)
+  assert.equal(bad.torchInstallCommand, null)
+  assert.equal(bad.torchSuggestionMissing, true)
+  assert.ok(bad.hints.some((h) => h.includes('INSTALL')), JSON.stringify(bad.hints))
+  const ok = normalizeDoctor({ checks: [{ name: 'torch_cuda', ok: true }] })
+  assert.equal(ok.suggestedTorch, null)
+  assert.equal(ok.hints.some((h) => h.includes('torch 推荐')), false, 'torch 正常时不该塞推荐提示')
+  // 纯函数直测
+  assert.deepEqual(normalizeTorchSuggestion(null), { suggestedTorch: null, torchInstallCommand: null })
+})
+
 await check('doctorBlockCreate：体检本身失败（ok:false）不拦建任务', () => {
   assert.equal(doctorBlockCreate({ ok: false, error: 'DOCTOR_UNAVAILABLE' }).block, false)
   assert.equal(doctorBlockCreate(null).block, false)
@@ -306,9 +410,36 @@ await check('引擎没就位时 cover_doctor 降级为 ok:false 且指向 INSTAL
   assert.equal(r.error, 'ENGINE_NOT_READY')
   assert.ok(String(r.message).includes('INSTALL'), r.message)
   assert.ok(!/[A-Za-z]:[\\/]/.test(r.message), 'message 泄漏路径：' + r.message)
+  // 失败时不能编造 torch 推荐
+  assert.ok(!r.suggestedTorch, '失败时不该有 suggestedTorch')
+  assert.ok(!r.torchInstallCommand, '失败时不该有 torchInstallCommand')
 })
 
 // ── 3.4 好球曲（refs）校验 ─────────────────────────────────────────────
+await check('classifyRefs：歌名/路径混合正确分类，只有路径查存在性', () => {
+  const good = join(HOME, 'ref-good.wav')
+  writeFileSync(good, 'RIFF', 'utf8')
+  const c = classifyRefs(['言っちゃいけないことばっか浮かぶよな', good, 'D:/nope/x.wav', '', '  '])
+  assert.deepEqual(c.names, ['言っちゃいけないことばっか浮かぶよな'])
+  assert.deepEqual(c.paths, [good, 'D:/nope/x.wav'])
+  assert.deepEqual(c.missing, [{ line: 3, path: 'D:/nope/x.wav' }], '只报路径那一行，歌名不算缺')
+  assert.equal(c.all.length, 3, '空行被过滤')
+})
+
+await check('refs：只填不存在的歌名不报错（当歌名放行，走到引擎检查）', async () => {
+  const r = await call('cover_setup', { singer: '测试', folder: HOME, refs: ['不存在的歌名', '言っちゃいけないことばっか浮かぶよな'] })
+  assert.notEqual(r.error, 'REF_NOT_FOUND', '歌名不该报 REF_NOT_FOUND：' + r.message)
+  assert.equal(r.error, 'ENGINE_NOT_READY', JSON.stringify(r))
+})
+
+await check('refs：歌名/好路径/坏路径混合 -> 只报坏路径那一行', async () => {
+  const good = join(HOME, 'ref-good.wav')
+  const r = await call('cover_setup', { singer: '测试', folder: HOME, refs: ['某首歌名', good, 'D:/nope/x.wav'] })
+  assert.equal(r.error, 'REF_NOT_FOUND')
+  assert.ok(r.message.includes('第 3 行'), r.message)
+  assert.ok(!r.message.includes('第 1 行'), '不该把歌名那行算错：' + r.message)
+})
+
 await check('refs：不存在的文件 -> REF_NOT_FOUND，并指出第几行', async () => {
   const good = join(HOME, 'ref-good.wav')
   writeFileSync(good, 'RIFF', 'utf8')

@@ -63,11 +63,27 @@ if cmd == 'doctor':
         {'id': 'msst', 'label': 'MSST 分离', 'status': 'ok', 'required': True},
         {'id': 'ytdlp', 'label': 'yt-dlp（抓取模式，可选）', 'status': 'ok', 'required': False,
          'hint': 'pip install yt-dlp'},
+        {'id': 'gpu_torch_match', 'label': '显卡与 torch 匹配', 'status': 'ok', 'required': True,
+         'detail': 'RTX 5060 Laptop (sm_120) in arch_list [sm_120]',
+         'suggestedTorch': {
+             'index': 'https://download.pytorch.org/whl/cu128',
+             'torch': 'torch>=2.7（50 系必须 cu128）',
+             'pip': 'standin-python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu128',
+             'gpu': 'NVIDIA GeForce RTX 5060 Laptop GPU', 'capability': 'sm_120',
+             'note': 'sm_120 只有 cu128 轮子带 kernel',
+         }},
     ]
     print(json.dumps({
         'ok': not red,
         'checks': checks,
         'hints': ['见 docs/INSTALL.md 的路径 B'] + (['先装 Applio 再重新体检'] if red else []),
+        'suggestedTorch': {
+            'gpu': 'NVIDIA GeForce RTX 5060 Laptop GPU', 'capability': 'sm_120',
+            'cuda': 'cu128', 'torch': '2.8.x',
+            'indexUrl': 'https://download.pytorch.org/whl/cu128',
+            'python': 'standin-python.exe',
+            'reason': 'Blackwell 只有 cu128+ 才有 sm_120 内核',
+        },
     }, ensure_ascii=False))
     sys.exit(0)
 

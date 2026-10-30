@@ -229,10 +229,13 @@ def result(status, artifacts=None, metrics=None, reason=None, error=None, input_
 
 
 def songs(job):
-    """当前 job 的素材条目（fetch 写入 job.refs / job.target_meta）。"""
+    """当前 job 的素材条目（fetch 写入 job.songs；兼容老 job 的 job.refs）。"""
     wd = workdir(job)
     entries = []
-    for item in job.get("refs") or []:
+    rows = job.get("songs")
+    if not isinstance(rows, list) or not rows:
+        rows = job.get("refs") or []
+    for item in rows:
         if isinstance(item, str):
             raw = item
             eid = "ref"
@@ -263,6 +266,18 @@ def songs(job):
             "role": "target", "raw": p, "rawRel": rel(job, p),
         })
     return entries
+
+
+def matched_ref_raw_paths(job):
+    """job.refs 里命中的好球曲对应 raw 路径集合（normcase abs）。"""
+    out = set()
+    for item in job.get("refs") or []:
+        if not isinstance(item, dict) or not item.get("matched"):
+            continue
+        raw = item.get("rawPath") or item.get("matchedPath")
+        if raw:
+            out.add(os.path.normcase(os.path.abspath(resolve(job, raw))))
+    return out
 
 
 def raw_files(job):

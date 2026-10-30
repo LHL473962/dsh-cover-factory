@@ -155,6 +155,21 @@ def run(job, cfg):
                 cluster_info["members"].append(s["id"])
         cluster_info["size"] = len(cluster_info["members"])
 
+    matched_raw = base.matched_ref_raw_paths(job)
+    if matched_raw:
+        user_weight = float(scfg.get("ref_weight", 6.0))
+        for s in kept_refs:
+            raw = base.resolve(job, s.get("file") or "")
+            if os.path.normcase(os.path.abspath(raw)) in matched_raw:
+                s["weight"] = round(user_weight, 2)
+                s["userRef"] = True
+                s["cluster"] = True
+            else:
+                s["weight"] = 1.0
+                s["userRef"] = False
+                s["cluster"] = False
+        cluster_info["userRefs"] = [s["id"] for s in kept_refs if s.get("userRef")]
+
     for s in songs:
         if s["role"] == "target":
             s["weight"] = float(scfg.get("target_weight", 1.0))

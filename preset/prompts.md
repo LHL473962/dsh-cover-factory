@@ -46,10 +46,13 @@
 断点续跑：被杀掉或机器重启后用 cover_run({ jobId, resume: true })，已 done 的阶段不会重做。
 只跑某几段：cover_run({ jobId, from: "mix", to: "export" })。
 
-**好球曲（refs）**：最能代表用户想听的那种音色的几首，建议 2–5 首；留空就让引擎从素材目录里自动筛。
-- 用 cover_setup({ singer, folder, refs: ["<文件路径1>", "<文件路径2>"] }) 传；只填文件名不算，必须是完整路径。
-- 路径写错会返回 REF_NOT_FOUND（message 里带「第几行」），按行号让用户改；超过 20 条返回 REF_TOO_MANY。
-- 界面上（设置 → 翻唱工厂 → 新建任务）有同名多行输入框，一行一个路径。
+**好球曲（refs，选填）**：最能代表用户想听的那种音色的几首，建议 2–5 首；留空就让引擎从素材目录里自动筛。
+- 每项可以填**歌名**（例：言っちゃいけないことばっか浮かぶよな）或**完整路径**，可混填。只写歌名完全合法，不再是「必须完整路径」。
+- 解析顺序：先在你的素材目录里找 → 找不到且用户同意联网（`refSearch: true` + `copyrightAck: true`）→ 搜 B 站并下载 → 仍失败就忽略并提示，不中断。
+- 填路径才校验存在性（含 / 或反斜杠/盘符）：写错报 `REF_NOT_FOUND`（按「第几行」改）；超过 20 条报 `REF_TOO_MANY`。歌名找不到只是 warning。
+- 想让它联网补歌名就传 `refSearch: true`，但**必须先确认版权**（`copyrightAck: true`，或直接 `mode: "auto"`）；没确认时返回 `needsConfirm: true`（reason `REF_SEARCH_NEEDS_ACK`），不会建 job —— 把风险讲清楚，等用户明确同意。
+- 返回里的 `refs` 分成 `{paths:[...], names:[...]}`：可以据此告诉用户「N 个歌名会先本地找，M 个路径已校验」。
+- 界面上（设置 → 翻唱工厂 → 新建任务）有同名多行输入框和一个「好球曲找不到时联网搜索（需要版权确认）」勾选框；输入框不带 placeholder，示例与说明在框下方小字里。
 
 **删除 job**：cover_delete({ jobId }) 默认是软删除（工作目录移到 jobs/_deleted/，可以手动找回）；
 只有用户明确说「彻底删掉/删干净」才用 cover_delete({ jobId, mode: "purge" })，并先提醒他不可恢复。

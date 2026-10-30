@@ -278,12 +278,20 @@ await step('cover_doctor：替身引擎全绿（health=green，missing 为空）
   assert.deepEqual(r.missing, [])
   assert.ok(Array.isArray(r.checks) && r.checks.length >= 3)
   assert.ok(String(r.install).includes('INSTALL'))
+  // 引擎按显卡推荐的 torch：透传 + 可直接执行的命令
+  assert.equal(r.suggestedTorch.cuda, 'cu128')
+  assert.equal(r.suggestedTorch.capability, 'sm_120')
+  assert.ok(String(r.suggestedTorch.gpu).includes('RTX'))
+  assert.ok(String(r.torchInstallCommand).includes('pip install torch --index-url'))
+  assert.equal(r.torchSuggestionMissing, false)
 })
 
 await step('面板 POST /doctor 返回体检结果，GET /settings 带缓存', async () => {
   const d = await postJson('/doctor', {})
   assert.equal(d.json.ok, true, JSON.stringify(d.json))
   assert.equal(d.json.health, 'green')
+  assert.equal(d.json.suggestedTorch.cuda, 'cu128')
+  assert.ok(String(d.json.torchInstallCommand).includes('pip install torch'))
   const s = await getJson('/settings')
   assert.ok(s.json.doctor, '/settings 应该带上次体检结果')
   assert.equal(s.json.doctor.health, 'green')
@@ -319,6 +327,25 @@ await step('装好后重新体检变绿：创建恢复，且缓存不锁死', as
   assert.equal(c.json.ok, true, JSON.stringify(c.json))
   // 收尾：删掉这个临时 job，别影响别的断言
   const del = await call('cover_delete', { jobId: c.json.jobId, mode: 'purge' })
+  assert.equal(del.ok, true, JSON.stringify(del))
+})
+
+await step('refSearch：import + 版权确认后写进 job_config.options，refs 分类正确', async () => {
+  const good = join(MAT, 'good1.wav')
+  const r = await call('cover_setup', {
+    singer: '好球曲联网', folder: MAT, target: TARGET, steps: 5000,
+    refs: ['某个歌名', good], refSearch: true, copyrightAck: true,
+  })
+  assert.equal(r.ok, true, JSON.stringify(r).slice(0, 600))
+  assert.equal(r.refSearch, true)
+  assert.deepEqual(r.refs.names, ['某个歌名'])
+  assert.deepEqual(r.refs.paths, [good])
+  assert.equal(r.refCount, 2)
+  const cfg = JSON.parse(readFileSync(r.config, 'utf8'))
+  assert.equal(cfg.options.refSearch, true, 'options.refSearch 要写进 job_config')
+  assert.equal(cfg.options.copyrightAck, true)
+  assert.deepEqual(cfg.refs, ['某个歌名', good], '歌名与路径都原样进 refs')
+  const del = await call('cover_delete', { jobId: r.jobId, mode: 'purge' })
   assert.equal(del.ok, true, JSON.stringify(del))
 })
 

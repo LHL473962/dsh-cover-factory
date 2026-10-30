@@ -89,6 +89,53 @@ def check_python(cfg):
 _TORCH_CACHE = {"data": None}
 
 
+def resolve_python_path(cfg, explicit=None):
+    cand = explicit or (cfg.get("paths") or {}).get("python") or sys.executable
+    resolved = _which_or_file(cand)
+    return resolved or str(cand)
+
+
+CU128 = "https://download.pytorch.org/whl/cu128"
+CU121 = "https://download.pytorch.org/whl/cu121"
+CU118 = "https://download.pytorch.org/whl/cu118"
+
+
+def torch_plan_for(capability, python_path="", gpu_name=""):
+    """按 compute capability 给 torch 安装建议（index / 版本 / 完整 pip 命令）。"""
+    py = python_path or "python"
+
+    def make(index, req, alternatives=None, note=""):
+        cmd = py + " -m pip install torch"
+        if index:
+            cmd += " --index-url " + index
+        plan = {"index": index, "torch": req, "pip": cmd}
+        if alternatives:
+            plan["alternatives"] = alternatives
+        if note:
+            plan["note"] = note
+        return plan
+
+    if not capability or len(capability) < 2:
+        return make("", "cpu（无 CUDA，训练约慢 10 倍）", None,
+                    "没有可用 CUDA：装 CPU 版；GPU 训练请换有 NVIDIA 显卡的机器")
+    major, minor = int(capability[0]), int(capability[1])
+    if (major, minor) == (12, 0):
+        plan = make(CU128, "torch>=2.7（50 系必须 cu128）", None, "sm_120 只有 cu128 轮子带 kernel")
+    elif major == 8 and minor >= 9:
+        plan = make(CU121, "torch 2.1–2.5", [{"index": CU118, "torch": "torch 2.1–2.5"}],
+                    "40 系官方旧版 cu121 / cu118 都可用")
+    elif major == 8:
+        plan = make(CU118, "torch 2.0–2.1", [{"index": CU121, "torch": "torch 2.1–2.5"}],
+                    "30 系 cu118 最稳")
+    elif major >= 7:
+        plan = make(CU118, "torch 2.0–2.1", None, "20 系及更老可用但慢，建议降步数")
+    else:
+        plan = make(CU118, "torch 1.13–2.0", None, "更老架构建议 CPU 或云 GPU")
+    plan["gpu"] = gpu_name or ""
+    plan["capability"] = "sm_%d%d" % (major, minor)
+    return plan
+
+
 def _torch_probe(cfg):
     """跑一次 torch，缓存结果（torch_cuda / gpu_torch_match 共用，避免重复 import）。"""
     if _TORCH_CACHE.get("data") is not None:
@@ -155,6 +202,7 @@ def check_gpu_torch_match(cfg, probe=None):
             "found": "读不到 torch/CUDA 信息", "path": py,
             "hint": "先修好 torch 检查（" + str(info.get("error") or "torch 不可用") + "）；" + matrix,
             "optional": True,
+            "suggestedTorch": torch_plan_for(None, py),
         }
     if not info.get("cuda"):
         return {
@@ -162,6 +210,7 @@ def check_gpu_torch_match(cfg, probe=None):
             "found": "无 CUDA（cpu-fallback）", "path": py,
             "hint": "没有可用 CUDA：CPU 训练约慢 10 倍（此检查标为可选）；要 GPU 训练需装对应 CUDA 版 torch：" + matrix,
             "optional": True,
+            "suggestedTorch": torch_plan_for(None, py),
         }
     cap = info.get("capability") or []
     arches = [str(a).lower() for a in (info.get("arch_list") or [])]
@@ -170,18 +219,23 @@ def check_gpu_torch_match(cfg, probe=None):
             "name": "gpu_torch_match", "ok": False,
             "found": "无法读取 compute capability（%s）" % (info.get("gpu") or "GPU"),
             "path": py, "hint": "重装 torch 后重试；" + matrix,
+            "suggestedTorch": torch_plan_for(None, py, info.get("gpu") or ""),
         }
     sm = "sm_%d%d" % (int(cap[0]), int(cap[1]))
     matched = sm in arches or (sm + "a") in arches
     gpu = info.get("gpu") or "GPU"
     arches_text = ",".join(info.get("arch_list") or [])
     found = "%s (%s) %s arch_list [%s]" % (gpu, sm, "in" if matched else "NOT in", arches_text)
+    plan = torch_plan_for(cap, py, gpu)
     if matched:
-        return {"name": "gpu_torch_match", "ok": True, "found": found, "path": py, "hint": ""}
+        return {"name": "gpu_torch_match", "ok": True, "found": found, "path": py, "hint": "",
+                "suggestedTorch": plan}
+    command = "%s -m pip install torch --index-url %s" % (py, plan.get("index") or "")
     return {
         "name": "gpu_torch_match", "ok": False, "found": found, "path": py,
-        "hint": "当前 torch 不含该架构，需换 cu 版本（%s）。torch=%s，arch_list=%s" % (
-            matrix, info.get("torch") or "?", arches_text),
+        "hint": "当前 torch 不含该架构，需换 cu 版本（%s）。torch=%s，arch_list=%s；建议：python engine/run.py setup --install-torch --python %s（或 %s）" % (
+            matrix, info.get("torch") or "?", arches_text, py, command),
+        "suggestedTorch": plan,
     }
 
 

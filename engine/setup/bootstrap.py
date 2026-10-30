@@ -5,8 +5,10 @@
     python engine/setup/bootstrap.py --check
     python engine/setup/bootstrap.py --install
     python engine/setup/bootstrap.py --install --config 覆盖.json
+    python engine/setup/bootstrap.py --install-torch [--python <exe>] [--dry-run] [--yes]
 
 步骤：yt-dlp(pip) -> ffmpeg(pip imageio-ffmpeg/手动) -> 旧版 RVC(git clone + 拷本机权重) -> MSST(只提示)。
+--install-torch 单独走：按显卡 capability 选 cu128/cu121/cu118，默认只打印命令（真装要 --yes 或 --install）。
 每步写 engine/setup/setup.log；单步失败不中断后续；最后输出 JSON 汇总（stdout 只有 JSON，进度走 stderr）。
 """
 
@@ -210,10 +212,94 @@ def install_msst(cfg):
     return action("msst", "manual", "已打印仓库与权重下载指引（不自动下载大模型）", before.get("path") or "", guidance)
 
 
+def _gpu_name_from_smi():
+    exe = shutil.which("nvidia-smi") or ""
+    if not exe:
+        sys32 = os.path.join(os.environ.get("WINDIR") or "C:/Windows", "System32", "nvidia-smi.exe")
+        exe = sys32 if os.path.isfile(sys32) else ""
+    if not exe:
+        return ""
+    rc, out = run_cmd([exe, "--query-gpu=name", "--format=csv,noheader"], timeout=30)
+    if rc != 0:
+        return ""
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    return lines[0] if lines else ""
+
+
+def detect_gpu(py):
+    """读目标 python 的 torch；torch 不可用就用 nvidia-smi 型号猜架构。"""
+    code = (
+        "import json,torch;c=torch.cuda.is_available();"
+        "d={'torch':torch.__version__,'cuda':bool(c),"
+        "'capability':(list(torch.cuda.get_device_capability(0)) if c else None),"
+        "'gpu':(torch.cuda.get_device_name(0) if c else '')};"
+        "print('CF='+json.dumps(d))"
+    )
+    rc, out = run_cmd([py, "-c", code], timeout=180)
+    payload = None
+    for line in out.splitlines():
+        if line.strip().startswith("CF="):
+            try:
+                payload = json.loads(line.strip()[3:])
+            except ValueError:
+                payload = None
+    if payload is not None:
+        payload["source"] = "torch"
+        return payload
+    name = _gpu_name_from_smi()
+    low = (name or "").lower()
+    cap = None
+    for pat, value in (("rtx 50", [12, 0]), ("rtx 40", [8, 9]), ("rtx 30", [8, 6]), ("rtx 20", [7, 5])):
+        if pat in low:
+            cap = value
+            break
+    return {"source": "nvidia-smi", "cuda": bool(name), "capability": cap, "gpu": name, "torch": ""}
+
+
+def install_torch_mode(cfg, args):
+    py = checks.resolve_python_path(cfg, getattr(args, "python", ""))
+    detected = detect_gpu(py)
+    plan = checks.torch_plan_for(detected.get("capability"), py, detected.get("gpu") or "")
+    need_install = bool(args.yes or args.install) and not args.dry_run
+    log("=" * 68)
+    log("torch 安装：python=%s" % py)
+    log("  检测=" + json.dumps(detected, ensure_ascii=False))
+    log("  建议=" + str(plan.get("pip") or ""))
+    log("  警告：torch 轮子约 2.5–3G；装错 cu 版本会 no kernel image，GPU 训练直接跑不了")
+    cmd = [py, "-m", "pip", "install", "torch"]
+    if plan.get("index"):
+        cmd += ["--index-url", plan["index"]]
+    payload = {
+        "ok": True,
+        "action": "install-torch",
+        "python": py,
+        "detected": detected,
+        "suggestedTorch": plan,
+        "command": cmd,
+        "dryRun": not need_install,
+        "executed": False,
+        "log": LOG,
+    }
+    if not need_install:
+        log("  DRY-RUN：只打印，不执行。真装加 --yes（或 --install）")
+        return payload, 0
+    log("  执行：" + " ".join(cmd))
+    rc, out = run_cmd(cmd, timeout=3600)
+    payload["executed"] = True
+    payload["exitCode"] = rc
+    payload["ok"] = rc == 0
+    log("  torch 安装%s（exit=%s）" % ("完成" if rc == 0 else "失败", rc))
+    return payload, 0 if rc == 0 else 1
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="bootstrap.py", description="翻唱工厂依赖检查/安装")
     parser.add_argument("--check", action="store_true", help="只检测（默认）")
-    parser.add_argument("--install", action="store_true", help="尝试自动安装能自动装的部分")
+    parser.add_argument("--install", action="store_true", help="尝试自动安装能自动装的部分（或作为 --install-torch 的确认）")
+    parser.add_argument("--install-torch", action="store_true", help="按显卡 capability 安装对应 torch（默认 dry-run）")
+    parser.add_argument("--python", default="", help="目标 Python 解释器（默认 paths.python）")
+    parser.add_argument("--dry-run", action="store_true", help="只打印 pip 命令，不执行")
+    parser.add_argument("--yes", action="store_true", help="确认真执行安装")
     parser.add_argument("--config", default="", help="引擎配置覆盖 JSON（paths 覆盖）")
     args = parser.parse_args(argv)
 
@@ -224,6 +310,12 @@ def main(argv=None):
             pass
 
     cfg = checks.load_config(args.config or None)
+
+    if args.install_torch:
+        payload, code = install_torch_mode(cfg, args)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return code
+
     actions = []
     if args.install:
         log("==== bootstrap --install start ====")

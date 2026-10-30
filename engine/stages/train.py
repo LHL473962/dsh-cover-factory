@@ -249,7 +249,8 @@ def _ref_names(job):
     if names:
         return sorted(names)
     out = []
-    for r in job.get("refs") or []:
+    rows = job.get("songs") or job.get("refs") or []
+    for r in rows:
         if isinstance(r, dict):
             out.append(str(r.get("name") or ""))
         else:
