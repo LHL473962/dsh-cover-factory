@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "singer": "test-neko",
+  "mode": "import",
+  "sources": {
+    "folder": "<DATA_DIR>/sep_yours"
+  },
+  "refs": [],
+  "target": {
+    "file": "<DATA_DIR>/raw/nekonichi/neko",
+    "title": "neko"
+  },
+  "options": {
+    "steps": 300,
+    "shift": 0,
+    "device": "cuda:0",
+    "keep_work": true
+  },
+  "output": {
+    "dir": "<你的桌面>/翻唱工厂"
+  },
+  "qa": {
+    "minGapRate": 12,
+    "minLoudness": -14.5,
+    "maxLoudness": -11.5
+  }
+}

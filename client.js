@@ -1,0 +1,413 @@
+/**
+ * dsh-cover-factory —— 浏览器半端：设置页里的「翻唱工厂」一页（v0.2）
+ *
+ * 写法照 dsh-meme-lookup/client.js：自注册脚本，不是 ESM：
+ *   window.__ModuleLoader__.load({ id, factory })
+ * 不引外部依赖，只用 require('react') + React.createElement。
+ *
+ * 数据全部来自插件进程内的 /api/cover-factory/*（同源、64KB 上限）：
+ *   GET  /settings              设置 + 引擎状态 + 在跑任务数
+ *   POST /settings              保存设置（白名单键）
+ *   GET  /jobs                  任务表（5 秒轮询）
+ *   POST /jobs/create           新建任务（复用 cover_setup 的校验）
+ *   POST /jobs/run|cancel|export 对应 cover_run / cover_cancel / cover_export
+ */
+window.__ModuleLoader__.load({
+  id: 'dsh-cover-factory',
+  factory: (require) => {
+    const React = require('react')
+    const h = React.createElement
+    const API = '/api/cover-factory'
+    const STEPS = [5000, 9000, 18000]
+    // 训练耗时：RTX 5060 Laptop 实测（约 0.37 秒/步）→ 5000≈30 分钟 / 9000≈55 分钟 / 18000≈1 小时 50 分
+    const ETA = { 5000: '约 30 分钟', 9000: '约 55 分钟', 18000: '约 1 小时 50 分' }
+    const ETA_HINT = '耗时按 RTX 5060 Laptop 实测（约 0.37 秒/步）；没有可用 GPU 会走 CPU，慢约 10 倍。'
+    const MODES = [['import', '导入本地素材（推荐）'], ['auto', '抓取（联网，需确认）']]
+    // 训练期间的硬件风险（与 docs/QUICKSTART.md、docs/FAQ.md 的「硬件与风险」一节同一份内容）
+    const RISK_LINES = [
+      '训练时显卡会跑满（接近 100%），显存占用约 7.5–8G；笔记本会明显发热、风扇全速，可能降频。',
+      '期间不要开游戏 / 剪辑 / 渲染等吃显卡的程序，容易 OOM 或崩溃。',
+      '请插着电源、保持散热；长时间满载对老笔记本有风险（可能过热关机）。',
+      '不要中途关机：引擎每 5 个 epoch 存一次盘，中断后可以用 resume 续训（同一个 job 重新运行选「续跑」）。',
+      '磁盘需要预留 ≥ 10G（素材 + 切片 + 特征 + 模型）。',
+      '显存 <5G 会先停下来让你选：减步数 或 加 --allow-lowmem（引擎侧放行，唯一的硬件硬闸）；5–8G 只警告，继续跑。',
+      '没有可用 GPU 会走 CPU，慢约 10 倍（9000 步约 9 小时）。',
+    ]
+
+    const asJson = async (res) => {
+      let d = {}
+      try { d = await res.json() } catch (e) { d = {} }
+      if (!res.ok && !d.ok) throw new Error(d.message || ('HTTP ' + res.status))
+      return d || {}
+    }
+    const jget = (p) => fetch(API + p, { credentials: 'same-origin' }).then(asJson)
+    const jpost = (p, body) => fetch(API + p, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    }).then(asJson)
+
+    const S = {
+      wrap: { color: '#E2E8F0', fontSize: 13, display: 'flex', flexDirection: 'column', gap: 12 },
+      bar: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', background: '#18212F', border: '1px solid #2A3A52', borderRadius: 10, padding: '8px 12px', color: '#94A3B8', fontSize: 12 },
+      dot: (c) => ({ width: 8, height: 8, borderRadius: 4, background: c, display: 'inline-block', marginRight: 6 }),
+      card: { background: '#1E2A3C', borderRadius: 12, padding: 16 },
+      title: { color: '#E2E8F0', fontSize: 13, fontWeight: 600, marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+      grid: { display: 'flex', flexWrap: 'wrap', gap: 12 },
+      field: { flex: '1 1 220px', minWidth: 170 },
+      label: { display: 'block', color: '#94A3B8', fontSize: 12, margin: '4px 0' },
+      input: { width: '100%', height: 32, background: '#161B26', border: '1px solid #2A3A52', borderRadius: 6, color: '#E2E8F0', padding: '0 8px', boxSizing: 'border-box' },
+      check: { display: 'flex', alignItems: 'flex-start', gap: 8, color: '#94A3B8', fontSize: 12, marginTop: 10, lineHeight: 1.5, cursor: 'pointer' },
+      btn: { height: 32, borderRadius: 8, border: 0, background: '#7C6BFF', color: '#fff', cursor: 'pointer', padding: '0 16px', fontSize: 12 },
+      btnGhost: { height: 26, borderRadius: 6, border: 0, background: '#2A3A52', color: '#E2E8F0', cursor: 'pointer', fontSize: 11, padding: '0 9px' },
+      btnDanger: { height: 26, borderRadius: 6, border: 0, background: '#43293A', color: '#FCA5A5', cursor: 'pointer', fontSize: 11, padding: '0 9px' },
+      msg: { background: '#18212F', border: '1px solid #2A3A52', borderRadius: 8, padding: '8px 10px', color: '#C4B5FD', fontSize: 12, whiteSpace: 'pre-wrap', lineHeight: 1.6 },
+      head: { display: 'grid', gridTemplateColumns: '1fr 1.1fr .7fr .55fr .8fr .4fr 2.6fr', gap: 8, alignItems: 'center', color: '#94A3B8', fontSize: 11, paddingBottom: 4 },
+      row: { display: 'grid', gridTemplateColumns: '1fr 1.1fr .7fr .55fr .8fr .4fr 2.6fr', gap: 8, alignItems: 'center', padding: '7px 0', borderTop: '1px solid #24344A', fontSize: 12 },
+      muted: { color: '#64748B', fontSize: 12 },
+      actions: { display: 'flex', gap: 6, flexWrap: 'wrap' },
+      cell: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      textarea: { width: '100%', minHeight: 84, background: '#161B26', border: '1px solid #2A3A52', borderRadius: 6, color: '#E2E8F0', padding: '6px 8px', boxSizing: 'border-box', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, lineHeight: 1.6, resize: 'vertical' },
+      hint: { color: '#64748B', fontSize: 11, lineHeight: 1.6, marginTop: 4 },
+      risk: { marginTop: 12, border: '1px solid #5A4420', background: '#221B10', borderRadius: 8, padding: '8px 10px' },
+      riskToggle: { background: 'transparent', border: 0, color: '#F5A524', cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: 0, textAlign: 'left' },
+      riskBody: { marginTop: 8, color: '#C9B79B', fontSize: 12, lineHeight: 1.7 },
+      riskLine: { marginBottom: 4 },
+    }
+
+    const statusText = (j) => {
+      if (j.running) return '运行中'
+      const map = { done: '完成', failed: '失败', cancelled: '已取消', 'running-or-idle': '待续跑' }
+      return map[j.status] || j.status || '—'
+    }
+    const statusColor = (j) => {
+      if (j.running) return '#FBBF24'
+      const map = { done: '#34D399', failed: '#F87171', cancelled: '#94A3B8' }
+      return map[j.status] || '#FBBF24'
+    }
+    const ellipsis = (s) => {
+      const t = String(s == null ? '' : s)
+      return t.length > 46 ? '…' + t.slice(-45) : t
+    }
+
+    function Panel() {
+      const [st, setSt] = React.useState(null)
+      const [engine, setEngine] = React.useState(null)
+      const [running, setRunning] = React.useState(0)
+      const [jobs, setJobs] = React.useState([])
+      const [msg, setMsg] = React.useState('')
+      const [busy, setBusy] = React.useState('')
+      const [form, setForm] = React.useState({ singer: '', folder: '', target: '', refs: '', steps: 9000, mode: 'import', copyrightAck: false })
+      // 风险提示默认收起
+      const [riskOpen, setRiskOpen] = React.useState(false)
+
+      const reloadSettings = React.useCallback(async () => {
+        try {
+          const d = await jget('/settings')
+          setSt(d.settings || null)
+          setEngine(d.engine || null)
+          if (typeof d.running === 'number') setRunning(d.running)
+        } catch (e) { setMsg('读设置失败：' + e.message) }
+      }, [])
+
+      const reloadJobs = React.useCallback(async () => {
+        try {
+          const d = await jget('/jobs')
+          if (Array.isArray(d.jobs)) setJobs(d.jobs)
+          if (d.engine) setEngine(d.engine)
+          if (typeof d.running === 'number') setRunning(d.running)
+        } catch (e) { /* 轮询失败不刷屏，下一轮再说 */ }
+      }, [])
+
+      React.useEffect(() => {
+        reloadSettings()
+        reloadJobs()
+      }, [reloadSettings, reloadJobs])
+
+      // 任务表 5 秒轮询；组件卸载时清定时器
+      React.useEffect(() => {
+        const timer = setInterval(() => { reloadJobs() }, 5000)
+        return () => { clearInterval(timer) }
+      }, [reloadJobs])
+
+      const patch = (p) => setSt(Object.assign({}, st || {}, p))
+
+      const save = async () => {
+        if (!st) return
+        setBusy('save')
+        setMsg('')
+        try {
+          const d = await jpost('/settings', st)
+          if (d.ok) {
+            setSt(d.settings || st)
+            setMsg('设置已保存' + (d.ignored && d.ignored.length ? '（忽略未知键：' + d.ignored.join('、') + '）' : ''))
+            await reloadSettings()
+          } else {
+            setMsg('保存失败：' + (d.error || '') + ' ' + (d.message || ''))
+          }
+        } catch (e) {
+          setMsg('保存失败：' + e.message)
+        } finally { setBusy('') }
+      }
+
+      const act = async (jobId, kind, extra) => {
+        setBusy(kind + ':' + jobId)
+        setMsg('')
+        try {
+          const d = await jpost('/jobs/' + kind, Object.assign({ jobId: jobId }, extra || {}))
+          if (d.ok) {
+            let extra = ''
+            if (kind === 'export' && d.output) extra = ' → ' + d.output
+            if (kind === 'run' && d.pid) extra = '（pid ' + d.pid + '）'
+            setMsg(kind + ' 成功：' + jobId + extra)
+          } else {
+            setMsg((d.error || '失败') + '：' + (d.message || ''))
+          }
+          await reloadJobs()
+        } catch (e) {
+          setMsg(kind + ' 失败：' + e.message)
+        } finally { setBusy('') }
+      }
+
+      const del = async (job) => {
+        const reclaim = '默认是软删除：整个工作目录会移到 _deleted/ 下（之后可以手动移回 jobs/ 找回）；已经导出到桌面的成品不会被删。'
+        const ok = window.confirm('删除任务「' + job.jobId + '」？\n\n' + reclaim + '\n\n继续吗？')
+        if (!ok) return
+        setBusy('delete:' + job.jobId)
+        setMsg('')
+        try {
+          const d = await jpost('/jobs/delete', { jobId: job.jobId })
+          if (d.ok) {
+            setMsg('已删除：' + job.jobId + (d.recycledTo ? '（已移到 _deleted，可找回）' : '（已物理删除）'))
+          } else {
+            setMsg((d.error || '删除失败') + '：' + (d.message || ''))
+          }
+          await reloadJobs()
+        } catch (e) {
+          setMsg('删除失败：' + e.message)
+        } finally { setBusy('') }
+      }
+
+      const submit = async () => {
+        setBusy('create')
+        setMsg('')
+        const refLines = String(form.refs || '')
+          .split(/\r?\n/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+        const body = {
+          singer: form.singer,
+          target: form.target,
+          steps: form.steps,
+          mode: form.mode,
+          refs: refLines,
+        }
+        if (form.mode === 'import') body.folder = form.folder
+        if (form.mode === 'auto') body.copyrightAck = !!form.copyrightAck
+        try {
+          const d = await jpost('/jobs/create', body)
+          if (d.needsConfirm) {
+            const lines = (d.warnings || []).map((w) => '· ' + w)
+            setMsg('需要二次确认，本次没有建 job：\n' + lines.join('\n') + '\n' + (d.next || ''))
+          } else if (d.ok) {
+            setMsg('已建 job：' + d.jobId + '（' + (d.eta || '') + '）' + (d.preview && d.preview.reason === 'stems-pending' ? '\n素材预览要等 fetch/separate 跑完。' : ''))
+            setForm(Object.assign({}, form, { singer: '', target: '' }))
+            await reloadJobs()
+          } else {
+            setMsg((d.error || '创建失败') + '：' + (d.message || ''))
+          }
+        } catch (e) {
+          setMsg('创建失败：' + e.message)
+        } finally { setBusy('') }
+      }
+
+      const settingsCard = h('div', { style: S.card },
+        h('div', { style: S.title }, h('span', null, '设置')),
+        st ? h('div', null,
+          h('div', { style: S.grid },
+            h('div', { style: S.field },
+              h('label', { style: S.label }, '引擎目录 engineDir'),
+              h('input', { style: S.input, value: st.engineDir || '', placeholder: '留空 = 插件自带 engine/', onChange: (e) => patch({ engineDir: e.target.value }) }),
+            ),
+            h('div', { style: S.field },
+              h('label', { style: S.label }, 'Python 解释器 python'),
+              h('input', { style: S.input, value: st.python || '', placeholder: '留空 = 内置运行时，再回退 PATH', onChange: (e) => patch({ python: e.target.value }) }),
+            ),
+            h('div', { style: S.field },
+              h('label', { style: S.label }, '成品输出目录 outputDir'),
+              h('input', { style: S.input, value: st.outputDir || '', onChange: (e) => patch({ outputDir: e.target.value }) }),
+            ),
+            h('div', { style: S.field },
+              h('label', { style: S.label }, '默认训练步数 defaultSteps'),
+              h('select', { style: S.input, value: st.defaultSteps || 9000, onChange: (e) => patch({ defaultSteps: Number(e.target.value) }) },
+                STEPS.map((n) => h('option', { key: n, value: n }, String(n) + '（' + ETA[n] + '）')),
+              ),
+              h('div', { style: S.hint }, ETA_HINT),
+            ),
+          ),
+          h('label', { style: S.check },
+            h('input', { type: 'checkbox', checked: !!st.allowDuet, onChange: (e) => patch({ allowDuet: e.target.checked }) }),
+            h('span', null, '允许对唱/合唱素材过预筛（allowDuet）——默认排除男声帧占比 >15% 的素材'),
+          ),
+          h('label', { style: S.check },
+            h('input', { type: 'checkbox', checked: !!st.autoDownload, onChange: (e) => patch({ autoDownload: e.target.checked }) }),
+            h('span', null, '允许抓取模式的旧开关（autoDownload）——v0.2 起抓取必须每次带 copyrightAck，这里仅作记录'),
+          ),
+          h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', marginTop: 12 } },
+            h('button', { style: Object.assign({}, S.btn, busy === 'save' ? { opacity: 0.6 } : {}), disabled: busy === 'save', onClick: save }, busy === 'save' ? '保存中…' : '保存设置'),
+            engine ? h('span', { style: S.muted }, engine.ready ? '引擎：' + ellipsis(engine.engineDir || '') : '引擎未就绪') : null,
+          ),
+        ) : h('div', { style: S.muted }, '读取设置中…'),
+      )
+
+      const jobsCard = h('div', { style: S.card },
+        h('div', { style: S.title },
+          h('span', null, '任务（' + jobs.length + '）'),
+          h('button', { style: S.btnGhost, onClick: reloadJobs }, '刷新'),
+        ),
+        jobs.length === 0
+          ? h('div', { style: S.muted }, '还没有任务：在下面新建一个，或在对话里用 cover_setup。')
+          : h('div', null,
+            h('div', { style: S.head },
+              h('span', null, '歌手'), h('span', null, '目标曲'), h('span', null, '状态'),
+              h('span', null, '进度'), h('span', null, '当前阶段'), h('span', null, 'mp3'), h('span', null, '操作'),
+            ),
+            jobs.map((j) => h('div', { key: j.jobId, style: S.row },
+              h('span', { style: S.cell, title: j.jobId }, j.singer || '—'),
+              h('span', { style: S.cell, title: j.target || '' }, j.target ? ellipsis(j.target) : '—'),
+              h('span', null, h('span', { style: { color: statusColor(j) } }, statusText(j))),
+              h('span', null, (j.done == null ? '—' : String(j.done)) + '·' + (j.total == null ? '?' : String(j.total))),
+              h('span', { style: S.cell }, j.currentStage || '—'),
+              h('span', { style: { color: j.hasMp3 ? '#34D399' : '#64748B' } }, j.hasMp3 ? '有' : '无'),
+              h('div', { style: S.actions },
+                h('button', {
+                  style: S.btnGhost,
+                  disabled: !!busy || j.running,
+                  onClick: () => act(j.jobId, 'run'),
+                }, busy === 'run:' + j.jobId ? '启动中…' : '运行'),
+                h('button', {
+                  style: S.btnGhost,
+                  disabled: !!busy || j.running,
+                  title: '从已完成的阶段继续（resume=true，不重做 separate/select）',
+                  onClick: () => act(j.jobId, 'run', { resume: true }),
+                }, busy === 'run:' + j.jobId ? '续跑中…' : '续跑'),
+                h('button', {
+                  style: S.btnDanger,
+                  disabled: !!busy || !j.running,
+                  onClick: () => act(j.jobId, 'cancel'),
+                }, busy === 'cancel:' + j.jobId ? '取消中…' : '取消'),
+                h('button', {
+                  style: S.btnGhost,
+                  disabled: !!busy,
+                  onClick: () => act(j.jobId, 'export'),
+                }, busy === 'export:' + j.jobId ? '导出中…' : '导出'),
+                h('button', {
+                  style: S.btnDanger,
+                  disabled: !!busy,
+                  title: '默认软删除：移到 _deleted/，可以找回',
+                  onClick: () => del(j),
+                }, busy === 'delete:' + j.jobId ? '删除中…' : '删除'),
+              ),
+            )),
+          ),
+      )
+
+      const createCard = h('div', { style: S.card },
+        h('div', { style: S.title }, h('span', null, '新建任务')),
+        h('div', { style: S.grid },
+          h('div', { style: S.field },
+            h('label', { style: S.label }, '歌手名（必填）'),
+            h('input', { style: S.input, value: form.singer, placeholder: '例：刘德华', onChange: (e) => setForm(Object.assign({}, form, { singer: e.target.value })) }),
+          ),
+          h('div', { style: S.field },
+            h('label', { style: S.label }, '模式'),
+            h('select', { style: S.input, value: form.mode, onChange: (e) => setForm(Object.assign({}, form, { mode: e.target.value, copyrightAck: false })) },
+              MODES.map((m) => h('option', { key: m[0], value: m[0] }, m[1])),
+            ),
+          ),
+          form.mode === 'import'
+            ? h('div', { style: S.field },
+              h('label', { style: S.label }, '素材目录（只读）'),
+              h('input', { style: S.input, value: form.folder, placeholder: 'D:/…/素材文件夹', onChange: (e) => setForm(Object.assign({}, form, { folder: e.target.value })) }),
+            )
+            : null,
+          h('div', { style: S.field },
+            h('label', { style: S.label }, '目标曲路径'),
+            h('input', { style: S.input, value: form.target, placeholder: 'D:/…/目标曲.wav', onChange: (e) => setForm(Object.assign({}, form, { target: e.target.value })) }),
+          ),
+          h('div', { style: S.field },
+            h('label', { style: S.label }, '训练步数'),
+            h('select', { style: S.input, value: form.steps, onChange: (e) => setForm(Object.assign({}, form, { steps: Number(e.target.value) })) },
+              STEPS.map((n) => h('option', { key: n, value: n }, String(n) + '（' + ETA[n] + '）')),
+            ),
+            h('div', { style: S.hint }, ETA_HINT),
+          ),
+          h('div', { style: { flex: '1 1 100%' } },
+            h('label', { style: S.label }, '好球曲（音色参考，可选）'),
+            h('textarea', {
+              style: S.textarea,
+              value: form.refs,
+              placeholder: '一行一个文件的完整路径，例如：\n<DATA_DIR>/sep_yours/yours/Vocals.wav\n<DATA_DIR>/sep_yours/song2/Vocals.wav',
+              onChange: (e) => setForm(Object.assign({}, form, { refs: e.target.value })),
+            }),
+            h('div', { style: S.hint },
+              '好球曲 = 最能代表你想听的那种音色的几首（建议 2–5 首）；留空则用素材目录里自动筛。',
+              h('br'),
+              '从素材目录里挑：把文件完整路径一行一个粘进来（浏览器读不到本地路径，需要手填）；最多 20 条，路径必须存在。',
+            ),
+          ),
+        ),
+        form.mode === 'auto'
+          ? h('label', { style: S.check },
+            h('input', { type: 'checkbox', checked: !!form.copyrightAck, onChange: (e) => setForm(Object.assign({}, form, { copyrightAck: e.target.checked })) }),
+            h('span', null, '我确认：抓取会联网搜索并下载音频，可能触发平台风控，版权风险自负。不勾选只会得到风险提示，不会建 job、不会下载。'),
+          )
+          : h('div', { style: S.muted }, '导入模式：素材来自你自己的文件夹，插件只读不删。'),
+        h('div', { style: S.risk },
+          h('button', {
+            style: S.riskToggle,
+            'aria-expanded': riskOpen ? 'true' : 'false',
+            onClick: () => setRiskOpen(!riskOpen),
+          }, (riskOpen ? '▾ ' : '▸ ') + '训练期间会发生什么（风险提示）'),
+          riskOpen
+            ? h('div', { style: S.riskBody }, RISK_LINES.map((line, i) => h('div', { key: i, style: S.riskLine }, '· ' + line)))
+            : null,
+        ),
+        h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', marginTop: 12 } },
+          h('button', {
+            style: Object.assign({}, S.btn, busy === 'create' ? { opacity: 0.6 } : {}),
+            disabled: busy === 'create',
+            onClick: submit,
+          }, busy === 'create' ? '提交中…' : '新建任务'),
+          h('span', { style: S.muted }, '建完不会自动开跑：在任务表点「运行」。'),
+        ),
+      )
+
+      return h('div', { style: S.wrap },
+        h('div', { style: S.bar },
+          h('span', null, h('span', { style: S.dot(engine && engine.ready ? '#34D399' : '#F87171') }), engine ? (engine.ready ? '引擎就绪' : '引擎未就绪') : '引擎状态未知'),
+          engine && !engine.ready && engine.message ? h('span', { style: { color: '#F87171' } }, '（' + engine.message + '）') : null,
+          h('span', { style: { color: '#2A3A52' } }, '|'),
+          h('span', null, h('span', { style: S.dot(running > 0 ? '#FBBF24' : '#64748B') }), running > 0 ? running + ' 个任务在跑' : '当前没有任务在跑'),
+        ),
+        msg ? h('div', { style: S.msg }, msg) : null,
+        settingsCard,
+        jobsCard,
+        createCard,
+      )
+    }
+
+    return {
+      inject: ['slots'],
+      apply(ctx) {
+        const slots = ctx.get('slots')
+        if (!slots) return
+        slots.inject('settings.section', () => slots.register(
+          { name: 'settings.section', id: 'cover-factory-panel', order: 42, label: '翻唱工厂' },
+          () => h(Panel),
+        ))
+      },
+    }
+  },
+})

@@ -1,0 +1,12 @@
+node_modules/
+__pycache__/
+*.pyc
+*.pth
+*.pt
+*.wav
+*.mp3
+jobs/
+_deleted/
+.env
+*.log
+engine/examples/sample-work/logs/

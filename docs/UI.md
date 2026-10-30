@@ -1,0 +1,97 @@
+# 翻唱工厂 · 图形设置页（v0.2）
+
+入口：DSH **设置 → 翻唱工厂**（由 `client.js` 通过 `slots.inject('settings.section')` 注册，section id `cover-factory-panel`，order 42）。
+
+页面全部数据来自插件进程内的同源路由 `/api/cover-factory/*`；跨站 Origin 一律 403，请求体上限 64KB。
+
+## 顶部状态条
+
+| 元素 | 含义 |
+|---|---|
+| 绿点「引擎就绪」/ 红点「引擎未就绪」 | 读设置里的 `engineDir`（留空则插件自带 `engine/`）判断 `run.py` 是否存在；未就绪时把原因（已脱敏）写在括号里 |
+| 黄点「N 个任务在跑」/ 灰点「当前没有任务在跑」 | 由 `plugin-run.json` + pid 存活判断，来自 `GET /jobs` 的 `running` |
+
+## 卡片 1 · 设置
+
+| 字段 | 控件 | 说明 |
+|---|---|---|
+| `engineDir` | 输入框 | 引擎目录；留空 = 插件自带 `engine/` |
+| `python` | 输入框 | 解释器路径；留空 = 内置运行时，再回退 PATH 的 `python` |
+| `outputDir` | 输入框 | 成品输出目录，默认 桌面/翻唱工厂 |
+| `defaultSteps` | 下拉 5000 / 9000 / 18000 | 默认训练步数，选项后面标了预计耗时（约 30 分钟 / 55 分钟 / 1 小时 50 分，RTX 5060 Laptop 实测）；下方提示「没有可用 GPU 会走 CPU，慢约 10 倍」 |
+| `allowDuet` | 开关 | 允许对唱/合唱素材过预筛（引擎 `--allow-duet`）；默认关，男声帧 >15% 会被排除 |
+| `autoDownload` | 开关 | 抓取模式的旧开关，v0.2 起**仅作记录**：真正放行抓取的是每次调用带 `copyrightAck` |
+
+按钮：**保存设置** → `POST /api/cover-factory/settings`（只认白名单键，未知键回报 `ignored`）。
+结果区显示「设置已保存」或具体失败原因（写盘被占用等）。
+
+## 卡片 2 · 任务
+
+5 秒轮询 `GET /api/cover-factory/jobs`（组件卸载时 `clearInterval`）。列：
+
+| 列 | 内容 |
+|---|---|
+| 歌手 | `singer` |
+| 目标曲 | 目标曲文件名（过长截断，悬停看全） |
+| 状态 | 运行中 / 完成 / 失败 / 已取消 / 待续跑（颜色区分） |
+| 进度 | `done·total`（阶段数） |
+| 当前阶段 | 引擎正在跑的阶段，如 `train` |
+| mp3 | 有 / 无（`export/*.mp3` 或引擎 `job.result.mp3` 存在） |
+| 操作 | 见下 |
+
+每行按钮：
+
+| 按钮 | 端点 | 行为 |
+|---|---|---|
+| 运行 | `POST /jobs/run {jobId}` | 后台起引擎（非阻塞，立刻回 pid）；已在跑时返回 `JOB_RUNNING`，按钮同时置灰 |
+| 续跑 | `POST /jobs/run {jobId, resume:true}` | 从最后 done 的阶段继续，不重做 separate/select；崩溃/关机后用这个（等价对话里的 `cover_run({ resume:true })`） |
+| 取消 | `POST /jobs/cancel {jobId}` | 先让引擎 `cancel`，不行再结束进程树；没在跑时置灰 |
+| 导出 | `POST /jobs/export {jobId}` | 复制成品到 `outputDir` 并返回路径；只有 wav 时用 ffmpeg 转 mp3，转不了就交付 wav |
+| 删除 | `POST /jobs/delete {jobId}` | 二次确认后**软删除**：整个工作目录移到 `<workRoot>/_deleted/<jobId>-<ts>/`，可以手动移回找回。运行中的 job 会先被取消再删；已导出到桌面的成品不受影响 |
+
+删除的二次确认文案（`window.confirm`）会说明：默认软删除、移到 `_deleted/`、可找回、桌面成品不删。物理删除（`purge`）不在 UI 上暴露，避免误点；需要时用对话里的 `cover_delete(jobId, mode:"purge")` 或直接调端点。
+
+任何按钮的失败都会把 `{ok:false, error, message}` 原样显示在提示区（message 已脱敏）。
+
+## 卡片 3 · 新建任务
+
+| 字段 | 控件 | 说明 |
+|---|---|---|
+| 歌手名 | 输入框（必填） | 决定声库名与成品文件名 |
+| 模式 | 下拉：导入本地素材 / 抓取（联网，需确认） | `import` / `auto` |
+| 素材目录 | 输入框（**仅 import 显示**） | 素材文件夹，插件只读不删 |
+| 目标曲路径 | 输入框 | 目标曲音频完整路径；不填只能训到 train |
+| 训练步数 | 下拉 5000 / 9000 / 18000 | 与设置里的默认值独立；耗时文案同上（30 分钟 / 55 分钟 / 1 小时 50 分，RTX 5060 Laptop 实测），下拉旁固定提示「没有可用 GPU 会走 CPU，慢约 10 倍」 |
+| 好球曲（音色参考） | 多行输入框（`textarea`，一行一个文件路径） | 可选。**好球曲 = 最能代表你想听的那种音色的几首（建议 2–5 首）；留空则用素材目录里自动筛**。提交时拆成数组传给 `cover_setup.refs`；最多 20 条，路径必须存在，否则报 `REF_NOT_FOUND`（带「第几行」）或 `REF_TOO_MANY`。空行会被忽略 |
+| 抓取确认 | 勾选框（**仅 auto 显示**） | 文案：会联网搜索并下载音频、可能触发平台风控、**版权风险自负** |
+| 训练期间会发生什么（风险提示） | 折叠块（默认收起，标题色 #F5A524） | 展开后 7 条：显卡跑满/7.5–8G 显存/发热降频；别开游戏剪辑渲染（OOM）；插电源保持散热（过热关机风险）；别中途关机（每 5 epoch 存盘，可用「续跑」resume）；磁盘预留 ≥10G；**显存 <5G 会先停下让你选（减步数 / 加 --allow-lowmem），5–8G 只警告**；无可用 GPU 走 CPU 慢约 10 倍 |
+
+按钮 **新建任务** → `POST /api/cover-factory/jobs/create`。
+
+- import：直接建 job（校验同对话侧 `cover_setup`），返回 `jobId`。
+- auto 且未勾选确认：返回 `{ok:true, needsConfirm:true, warnings:[…], next}`，**不建 job、不联网**，页面把三条风险提示和「确认后带 copyrightAck:true 再调用」显示出来。
+- auto 且已勾选：等同 `copyrightAck:true`，建 job；引擎仍要求 `options.copyrightAck===true` 才抓。
+- 建完**不会自动开跑**，需要去任务表点「运行」。
+
+## 端点一览（全部同源、64KB 上限、错误统一 `{ok:false, error, message}`）
+
+| 方法 | 路径 | 入参 | 复用逻辑 |
+|---|---|---|---|
+| GET | `/settings` | — | `{settings, engine:{ready,engineDir,message}, running}` |
+| POST | `/settings` | 设置白名单键 | `saveSettings()` |
+| GET | `/jobs` | — | `listJobs()` + 引擎状态 + 在跑数 |
+| POST | `/jobs/create` | `singer, folder, target, steps, mode, copyrightAck, refs[]` | `createJob()` → 同 `cover_setup` |
+| POST | `/jobs/run` | `jobId, from?, to?, resume?` | `runJob()` → 同 `cover_run` |
+| POST | `/jobs/cancel` | `jobId` | `cancelJobRun()` → 同 `cover_cancel` |
+| POST | `/jobs/export` | `jobId, overwrite?` | `exportJob()` → 同 `cover_export` |
+| POST | `/jobs/delete` | `jobId, purge?` | `deleteJob()` → 同 `cover_delete`（`purge:true` ⇒ `mode:"purge"`） |
+
+**不绕过校验**：这条链走的是 `lib/tools.js` 里注册给 DSH 的那同一批 `execute`（`runTool()` → 守卫后的实现），所以错误码、脱敏、参数范围（steps/shift/limit）与对话侧完全一致。
+
+## v0.2 已知边界
+
+- 没有逐阶段时间线/日志查看：需要日志时用对话里的 `cover_status`。
+- 任务表只列最近 20 个 job（按目录 mtime），更多用对话里的 `cover_list`。
+- 删除只做软删（移到 `_deleted/`）；物理清理由对话侧 `cover_delete(mode:"purge")` 或手动删目录。
+- `_deleted/` 里的东西不会出现在任务表（`listJobs` 跳过 `_` 开头的目录），要找回就把它移回 `jobs/`。
+- 设置页半端只读 `settings.section`，不提供独立路由页面。

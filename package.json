@@ -1,0 +1,64 @@
+{
+  "name": "dsh-cover-factory",
+  "version": "0.1.0",
+  "description": "翻唱工厂：歌手 + 好球曲 + 目标曲，端到端产出成品 mp3 与质检报告（DSH 工具插件）",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./preset/*": "./preset/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "engine",
+    "preset",
+    "cordis.patch.yml",
+    "DESIGN.md",
+    "README.md",
+    "docs",
+    "fixtures",
+    "tests"
+  ],
+  "engines": {
+    "dsh": ">=0.2.0-rc.2",
+    "node": ">=22"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "slots"
+      ]
+    },
+    "compatibility": {
+      "dsh": ">=0.2.0-rc.1 <0.3.0-0",
+      "dshReleases": {
+        "0.2.0-rc.1": "compatible",
+        "0.2.1-rc.1": "compatible",
+        "0.2.1-rc.2": "compatible"
+      }
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "cover",
+    "rvc",
+    "翻唱"
+  ],
+  "license": "MIT",
+  "capabilityRedLines": [
+    "不内置、不分发任何音源；抓取模式必须由用户显式开启（autoDownload=true）",
+    "导入模式对用户素材目录只读，不删除、不移动原始文件",
+    "训练/推理在用户本机跑，插件不上传任何音频或声库到第三方",
+    "engine/ 目录由引擎侧维护，插件只通过 CLI 调用，不写其中任何文件"
+  ]
+}

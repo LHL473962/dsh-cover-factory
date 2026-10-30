@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "singer": "示例歌手",
+  "mode": "import",
+  "sources": {
+    "kind": "folder",
+    "folder": "<DATA_DIR>/sep_yours/yours",
+    "readOnly": true
+  },
+  "refs": [],
+  "target": {
+    "file": "D:/Apps/MSST/input_yours/yours.wav",
+    "title": "yours"
+  },
+  "options": {
+    "steps": 300,
+    "shift": 0,
+    "device": "cuda:0",
+    "allowDuet": false,
+    "outputDir": "<你的桌面>/翻唱工厂"
+  },
+  "config": {
+    "train": { "min_vram_gb": 8.0 }
+  }
+}

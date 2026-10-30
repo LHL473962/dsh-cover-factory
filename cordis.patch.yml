@@ -1,0 +1,8 @@
+# 翻唱工厂（dsh-cover-factory）bundle patch。
+#
+# 注册 cover_setup / cover_run / cover_status / cover_cancel / cover_list / cover_export
+# 六个工具，以及可选的设置页路由 /api/cover-factory/*。
+# 工具只通过 engine/run.py 这个 CLI 与本地引擎交互，不直接碰 engine/ 里的文件。
+- insert:
+    - id: cover-factory
+      name: 'dsh-cover-factory'
