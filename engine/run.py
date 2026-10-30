@@ -1004,6 +1004,8 @@ def cmd_setup(args):
         argv.append("--install")
     else:
         argv.append("--check")
+    if getattr(args, "with_models", False):
+        argv.append("--with-models")
     if getattr(args, "python", ""):
         argv.extend(["--python", args.python])
     if getattr(args, "dry_run", False):
@@ -1069,6 +1071,8 @@ def main(argv=None):
     p_setup = sub.add_parser("setup", help="依赖检查/安装（bootstrap）")
     p_setup.add_argument("--check", action="store_true", help="只检测（默认）")
     p_setup.add_argument("--install", action="store_true", help="尝试自动安装能自动装的部分（或作为 install-torch 的确认）")
+    p_setup.add_argument("--with-models", dest="with_models", action="store_true",
+                         help="下载 MSST 代码 + MelBand kim + hubert/rmvpe（默认 dry-run，--yes 才下载）")
     p_setup.add_argument("--install-torch", dest="install_torch", action="store_true",
                          help="按显卡 capability 安装对应 torch（默认 dry-run）")
     p_setup.add_argument("--python", default="", help="目标 Python 解释器（默认 paths.python）")

@@ -14,11 +14,14 @@
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import time
+import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE_DIR = os.path.dirname(HERE)
@@ -292,10 +295,191 @@ def install_torch_mode(cfg, args):
     return payload, 0 if rc == 0 else 1
 
 
+def _human_size(num):
+    try:
+        num = float(num)
+    except (TypeError, ValueError):
+        return "?"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if num < 1024 or unit == "TB":
+            return ("%.1f %s" % (num, unit)) if unit != "B" else ("%d B" % num)
+        num /= 1024.0
+    return "?"
+
+
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _valid_weight(path, expected_size, expected_sha):
+    """已存在且大小/sha 匹配；返回 (ok, detail)。"""
+    if not os.path.isfile(path):
+        return False, "不存在"
+    size = os.path.getsize(path)
+    if expected_size and size != int(expected_size):
+        return False, "大小不符（%s，期望 %s）" % (_human_size(size), _human_size(expected_size))
+    if expected_sha:
+        got = _sha256_file(path)
+        if got.lower() != str(expected_sha).lower():
+            return False, "sha256 不符（%s）" % got[:16]
+    return True, _human_size(size)
+
+
+def _http_download(url, part, expected_size, timeout=60):
+    existing = os.path.getsize(part) if os.path.isfile(part) else 0
+    headers = {"User-Agent": "dsh-cover-factory/1.0"}
+    if existing:
+        headers["Range"] = "bytes=%d-" % existing
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        status = getattr(resp, "status", 200)
+        mode = "ab" if existing and status == 206 else "wb"
+        if mode == "wb":
+            existing = 0
+        total = int(expected_size or 0)
+        if not total:
+            total = existing + int(resp.headers.get("Content-Length") or 0)
+        done = existing
+        last = 0.0
+        with open(part, mode) as f:
+            while True:
+                chunk = resp.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                now = time.time()
+                if now - last >= 2.0:
+                    if total:
+                        log("    下载 %.1f%%（%s / %s）" % (done * 100.0 / total, _human_size(done), _human_size(total)))
+                    else:
+                        log("    下载 %s" % _human_size(done))
+                    last = now
+    real = os.path.getsize(part)
+    if expected_size and real != int(expected_size):
+        raise RuntimeError("大小不符：%s，期望 %s" % (_human_size(real), _human_size(expected_size)))
+
+
+def _download_weight(name, url, dest, expected_size, expected_sha, execute):
+    if not dest:
+        return action(name, "failed", "未配置落点路径", "", "检查 paths.msst_checkpoint / rvc_hubert / rvc_rmvpe")
+    ok, detail = _valid_weight(dest, expected_size, expected_sha)
+    if ok:
+        log("[%s] 已存在，跳过：%s（%s）" % (name, dest, detail))
+        return action(name, "skipped", "已存在（%s）：%s" % (detail, url), dest, url)
+    if not execute:
+        log("[%s] DRY-RUN：需下载 %s -> %s（%s）" % (name, url, dest, _human_size(expected_size)))
+        return action(name, "skipped", "dry-run：加 --yes 下载 %s（%s）" % (_human_size(expected_size), url), dest, url)
+    if not url:
+        log("[%s] 没配置下载 URL" % name)
+        return action(name, "failed", "没配置下载 URL", dest, "在 paths.model_sources 里补 %s" % name)
+    parent = os.path.dirname(os.path.abspath(dest))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    part = dest + ".part"
+    if os.path.isfile(part) and expected_size and os.path.getsize(part) == int(expected_size):
+        ok, detail = _valid_weight(part, expected_size, expected_sha)
+        if ok:
+            os.replace(part, dest)
+            log("[%s] 已下载完整（断点续传校验通过）：%s" % (name, dest))
+            return action(name, "done", "下载完成（%s）：%s" % (detail, url), dest, url)
+    log("[%s] 下载 %s（%s）-> %s" % (name, url, _human_size(expected_size), dest))
+    last_error = ""
+    for attempt in range(3):
+        try:
+            _http_download(url, part, expected_size)
+            ok, detail = _valid_weight(part, expected_size, expected_sha)
+            if not ok:
+                raise RuntimeError(detail)
+            os.replace(part, dest)
+            log("[%s] 完成：%s（%s）" % (name, dest, detail))
+            return action(name, "done", "下载完成（%s）：%s" % (detail, url), dest, url)
+        except Exception as exc:  # noqa: BLE001
+            last_error = "%s: %s" % (type(exc).__name__, exc)
+            log("[%s] 第 %d 次下载失败：%s" % (name, attempt + 1, last_error))
+            time.sleep(1.5 * (attempt + 1))
+    return action(name, "failed", "下载失败：%s（可手动下载：%s -> %s）" % (last_error[:300], url, dest), dest, url)
+
+
+def install_models(cfg, execute):
+    """MSST 仓库 + MelBand kim + hubert/rmvpe；已存在跳过、断点续传、失败不中断。"""
+    paths = cfg.get("paths") or {}
+    sources = paths.get("model_sources") or {}
+    sizes = paths.get("model_sizes") or {}
+    shas = paths.get("model_sha256") or {}
+    steps = []
+
+    msst_root = paths.get("msst_root") or ""
+    repo_url = sources.get("msst_repo") or ""
+    if msst_root and os.path.isdir(msst_root):
+        log("[msst_repo] 已存在，跳过：%s" % msst_root)
+        steps.append(action("msst_repo", "skipped", "已存在：%s" % msst_root, msst_root, repo_url))
+    elif not execute:
+        steps.append(action("msst_repo", "skipped", "dry-run：加 --yes 执行 git clone %s -> %s" % (repo_url, msst_root), msst_root, repo_url))
+    elif not repo_url:
+        steps.append(action("msst_repo", "failed", "没配置 paths.model_sources.msst_repo", msst_root, ""))
+    else:
+        parent = os.path.dirname(os.path.abspath(msst_root))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        log("[msst_repo] git clone --depth 1 %s -> %s" % (repo_url, msst_root))
+        rc, out = run_cmd(["git", "clone", "--depth", "1", repo_url, msst_root], timeout=1800)
+        if rc == 0 and os.path.isdir(msst_root):
+            steps.append(action("msst_repo", "done", "已 clone：%s" % repo_url, msst_root, repo_url))
+        else:
+            steps.append(action("msst_repo", "failed", "git clone 失败：%s" % (out.strip().splitlines() or ["exit=%s" % rc])[-1][:300], msst_root, repo_url))
+
+    rvc_root = paths.get("rvc_root") or ""
+    targets = [
+        ("melband_kim", paths.get("msst_checkpoint") or (os.path.join(msst_root, "pretrain", "MelBandRoformer_kim.ckpt") if msst_root else "")),
+        ("hubert_base", paths.get("rvc_hubert") or (os.path.join(rvc_root, "assets", "hubert", "hubert_base.pt") if rvc_root else "")),
+        ("rmvpe", paths.get("rvc_rmvpe") or (os.path.join(rvc_root, "assets", "rmvpe", "rmvpe.pt") if rvc_root else "")),
+    ]
+    for name, dest in targets:
+        steps.append(_download_weight(name, sources.get(name) or "", dest,
+                                     sizes.get(name), shas.get(name), execute))
+    return steps
+
+
+def _normalize_step(step):
+    status = step.get("status") or "failed"
+    if status in ("already", "manual", "skipped"):
+        status = "skipped"
+    elif status in ("installed", "done", "cloned", "ok"):
+        status = "done"
+    else:
+        status = "failed"
+    return {
+        "name": step.get("name") or "unknown",
+        "status": status,
+        "detail": step.get("detail") or "",
+        "path": step.get("path") or "",
+    }
+
+
+def _next_steps(steps):
+    out = ["运行 python engine/run.py doctor：全绿（ok=true）才算安装成功"]
+    for s in steps:
+        if s["status"] == "failed":
+            out.append("手动补 %s：%s" % (s["name"], s["detail"]))
+    out.append("初始化 job：python engine/run.py init --config <job配置> --workdir <workdir>")
+    out.append("重启 DSH（如果通过 install.ps1 装进 DSH profile）")
+    return out
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="bootstrap.py", description="翻唱工厂依赖检查/安装")
     parser.add_argument("--check", action="store_true", help="只检测（默认）")
     parser.add_argument("--install", action="store_true", help="尝试自动安装能自动装的部分（或作为 --install-torch 的确认）")
+    parser.add_argument("--with-models", dest="with_models", action="store_true",
+                        help="下载 MSST 代码 + MelBand kim + hubert/rmvpe（默认 dry-run，--yes 才下载）")
     parser.add_argument("--install-torch", action="store_true", help="按显卡 capability 安装对应 torch（默认 dry-run）")
     parser.add_argument("--python", default="", help="目标 Python 解释器（默认 paths.python）")
     parser.add_argument("--dry-run", action="store_true", help="只打印 pip 命令，不执行")
@@ -316,20 +500,32 @@ def main(argv=None):
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return code
 
-    actions = []
-    if args.install:
-        log("==== bootstrap --install start ====")
-        for step in (install_ytdlp, install_ffmpeg, install_old_rvc, install_msst):
-            try:
-                act = step(cfg)
-            except Exception as exc:  # noqa: BLE001
-                act = action(step.__name__, "failed", "%s: %s" % (type(exc).__name__, exc))
-            log("step %-9s -> %-9s %s" % (act.get("name"), act.get("status"), str(act.get("detail"))[:200]))
-            actions.append(act)
-        log("==== bootstrap --install done ====")
+    if args.install or args.with_models:
+        steps = []
+        if args.install:
+            log("==== bootstrap --install start ====")
+            for step in (install_ytdlp, install_ffmpeg, install_old_rvc, install_msst):
+                try:
+                    act = step(cfg)
+                except Exception as exc:  # noqa: BLE001
+                    act = action(step.__name__, "failed", "%s: %s" % (type(exc).__name__, exc))
+                log("step %-9s -> %-9s %s" % (act.get("name"), act.get("status"), str(act.get("detail"))[:200]))
+                steps.append(_normalize_step(act))
+            log("==== bootstrap --install done ====")
+        if args.with_models:
+            log("==== bootstrap --with-models start（%s）====" % ("执行" if args.yes else "dry-run"))
+            steps.extend(_normalize_step(s) for s in install_models(cfg, bool(args.yes)))
+            log("==== bootstrap --with-models done ====")
+        payload = {
+            "ok": all(s["status"] != "failed" for s in steps),
+            "steps": steps,
+            "nextSteps": _next_steps(steps),
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ok"] else 1
 
     payload = checks.doctor_payload(cfg)
-    payload["actions"] = actions
+    payload["actions"] = []
     payload["log"] = LOG
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if payload.get("ok") else 1

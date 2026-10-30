@@ -52,8 +52,9 @@
 
 ## 路径 A：半自动 bootstrap（新机器先跑这个）
 
-    python engine/run.py setup --install
-    # 等价：python engine/setup/bootstrap.py --install
+    python engine/run.py setup --install --with-models --yes
+    # 等价：python engine/setup/bootstrap.py --install --with-models --yes
+    # 只打印不下载：去掉 --yes；只装插件不装依赖：install.ps1 -SkipDeps
 
 它**实际会做的**（按当前引擎实现）：
 
@@ -62,13 +63,16 @@
 | yt-dlp | ✅ | `pip install -U yt-dlp`（抓取模式才用） |
 | ffmpeg | ✅ | `pip install imageio-ffmpeg`，并把路径写回配置 |
 | 旧版 RVC | ✅ | `git clone --depth 1 --branch <tag>`，再把本机已有权重复制进去 |
-| MSST（代码 + kim 权重） | ⚠️ 只提示 | 打印 clone 地址与权重说明，**不下载权重**（模型页条款） |
+| MSST 代码 + kim 权重 | ✅（--with-models） | clone 到 paths.msst_root；已有跳过；kim 约 871MB，断点续传/失败不中断 |
+| RVC hubert_base.pt + rmvpe.pt | ✅（--with-models） | 约 181MB + 173MB；已有跳过；URL 在 paths.model_sources，可配镜像 |
 | PyTorch + CUDA 轮子 | ❌ | 随显卡/驱动变，自己装（见下） |
 | Applio | ❌ | 自己 clone + pip |
 | `room_ir.wav` | ❌ | 自备 IR |
 
-所以「全自动」只覆盖能自动的那部分；剩下三项（torch / Applio / MSST 权重）**必须人工**，bootstrap 结束时会告诉你还缺什么。
+所以「全自动」覆盖：yt-dlp / ffmpeg / 旧版 RVC / MSST 代码 / MelBand kim / hubert / rmvpe；
+torch（按显卡选 cu 版本）和 Applio 仍需人工（torch 可用 setup --install-torch 一键）。
 **需要**：≥15G 空闲磁盘、能访问 PyPI / GitHub / HuggingFace（或配镜像）。
+AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_AI.md），它会自动找 profile、幂等注册插件并跑上面这条。
 
 ### 只装/重装 torch（先看命令，再加 --yes 真装）
 

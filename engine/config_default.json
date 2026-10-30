@@ -27,7 +27,19 @@
     "msst_inference": "",
     "rvc_models_src": "D:/Apps/rvc-models",
     "rvc_hubert": "",
-    "rvc_rmvpe": ""
+    "rvc_rmvpe": "",
+    "model_sources": {
+      "msst_repo": "https://github.com/ZFTurbo/Music-Source-Separation-Training.git",
+      "melband_kim": "https://huggingface.co/KimberleyJSN/melbandroformer/resolve/main/MelBandRoformer.ckpt",
+      "hubert_base": "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/hubert_base.pt",
+      "rmvpe": "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/rmvpe.pt"
+    },
+    "model_sizes": {
+      "melband_kim": 913106900,
+      "hubert_base": 189507909,
+      "rmvpe": 181184272
+    },
+    "model_sha256": {}
   },
   "audio": {
     "sample_rate": 44100,

@@ -2,6 +2,22 @@
 
 输入歌手名 / 好球曲 / 目标曲，端到端产出翻唱成品（mp3 + 报告）到桌面。
 
+> **让 AI 全自动安装**：把**仓库地址 + [docs/INSTALL_AI.md](docs/INSTALL_AI.md)** 一起交给有 shell 与网络权限的 AI 即可（纯聊天 AI 无法执行）。
+> 人类手动安装见 [docs/INSTALL.md](docs/INSTALL.md)；快速上手见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
+
+## AI 一键安装（推荐）
+
+在仓库根目录执行（Windows，会自动找 DSH profile）：
+
+    powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Yes
+
+可选参数：-ProfilePath <profile目录>、-RepoPath <仓库目录>、-SkipDeps（只装插件不装依赖/模型）、-PythonPath <python.exe>。
+脚本会 clone/pull 到 <profile>/node_modules/dsh-cover-factory、幂等地把 dsh-cover-factory 加进
+dsh.profile.bundles，再调用 engine/setup/bootstrap.py --install --with-models --yes（依赖 + MSST/RVC 权重）。
+装完会打印“重启 DSH”。
+
+**验证门**：python engine/run.py doctor 输出 ok=true（全绿）才算成功。详见 [docs/INSTALL_AI.md](docs/INSTALL_AI.md)。
+
 ## 安装（本地试用）
 1. 把本目录复制/链接到 DSH profile 的 node_modules：
    <你的 DSH profile>/node_modules/dsh-cover-factory
