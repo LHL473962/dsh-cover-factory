@@ -139,7 +139,9 @@ def _run_new(job, cfg, tgt, stem, inst, vocal, target_vocals, ir, ir_used, shift
     out = base.work(job, "mix", "out.wav")
     premix = base.work(job, "mix", "_tmp", "premix.wav")
     report_path = base.work(job, "mix", "report.json")
+    opts = job.get("options") or {}
     params = {"preset": "new", "shift": shift, "mix": mcfg, "new": ncfg,
+              "vocalDb": opts.get("vocalDb"),
               "ir": os.path.basename(ir) if ir_used else None}
     inputs = [vocal, inst, target_vocals] + ([ir] if ir_used else [])
     timeout = float(mcfg.get("timeout_sec", 1800))
@@ -148,7 +150,6 @@ def _run_new(job, cfg, tgt, stem, inst, vocal, target_vocals, ir, ir_used, shift
     i_active = _active_median_db(ff, inst, ncfg.get("active_frame_ms", 50), ncfg.get("active_floor_db", -45))
     if v_active is None or i_active is None:
         return base.result("failed", [], {}, error="new 预设：活跃帧电平测不到（人声或伴奏）")
-    opts = job.get("options") or {}
     target_db = float(ncfg.get("target_db", 0.0))
     vocal_db = float(opts["vocalDb"]) if "vocalDb" in opts else float(ncfg.get("vocal_db", 0.0))
     gain = (float(i_active) + target_db + vocal_db) - float(v_active)

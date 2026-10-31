@@ -83,7 +83,7 @@ def _load_words(path):
 MODEL_ROOT = os.path.expanduser("~/.dsh/cover-factory/models/faster-whisper-small")
 
 
-def _asr_words(source, cache, model_name):
+def _asr_words(source, cache, model_name, model_root=MODEL_ROOT):
     try:
         from faster_whisper import WhisperModel
     except Exception as exc:  # noqa: BLE001
@@ -93,17 +93,22 @@ def _asr_words(source, cache, model_name):
             return _load_words(cache), ""
         except Exception:
             pass
-    os.makedirs(MODEL_ROOT, exist_ok=True)
+    os.makedirs(model_root, exist_ok=True)
+    # 若本地已缓存对应模型目录，直接用本地路径，避免联网
+    base_root = os.path.dirname(model_root) if os.path.basename(model_root).startswith("faster-whisper-") else model_root
+    local_model_dir = os.path.join(base_root, "faster-whisper-" + str(model_name))
+    if not os.path.isfile(os.path.join(local_model_dir, "model.bin")):
+        local_model_dir = model_root if os.path.isfile(os.path.join(model_root, "model.bin")) else ""
     errors = []
     for lang in ("ja", None):
         try:
             try:
-                model = WhisperModel(model_name, device="cpu", compute_type="int8",
-                                     download_root=MODEL_ROOT)
+                model = WhisperModel(local_model_dir or model_name, device="cpu", compute_type="int8",
+                                     download_root=model_root)
             except Exception:
-                os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+                os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
                 model = WhisperModel(model_name, device="cpu", compute_type="int8",
-                                     download_root=MODEL_ROOT)
+                                     download_root=model_root)
             segments, _info = model.transcribe(source, language=lang, word_timestamps=True,
                                                 vad_filter=False)
             words = []
@@ -136,12 +141,14 @@ def _f0_confidence_mask(source, n, ff):
             return np.zeros(n, dtype=np.float32), 0.0
         times = []
         confs = []
+        active = []
         for st in range(0, len(x) - frame + 1, hop):
             seg = x[st:st + frame]
             seg = seg - seg.mean()
             rms = float(np.sqrt(np.mean(seg * seg)))
             conf = 0.0
-            if rms > 0.005:
+            is_active = rms > 0.005
+            if is_active:
                 spec = np.fft.rfft(seg, n=2048)
                 ac = np.fft.irfft(spec * np.conj(spec), n=2048)[:frame]
                 if ac[0] > 1e-12:
@@ -151,13 +158,15 @@ def _f0_confidence_mask(source, n, ff):
                         conf = float(np.max(ac[lo:hi]))
             times.append(st / 16000.0)
             confs.append(max(0.0, conf))
-        m = np.zeros(n, dtype=np.float32)
-        for t, c in zip(times, confs):
-            if c >= 0.12:
+            active.append(is_active)
+        # 默认换声；只有“有能量但 F0 置信度 < 0.12”的帧才当哼唱保留原声。
+        m = np.ones(n, dtype=np.float32)
+        for t, c, act in zip(times, confs, active):
+            if act and c < 0.12:
                 a = int(t * SR)
                 b = min(n, int((t + 0.05) * SR))
                 if b > a:
-                    m[a:b] = 1.0
+                    m[a:b] = 0.0
         return _smooth(m, SMOOTH_KEEP), (float(np.mean(confs)) if confs else 0.0)
     except Exception:
         return np.zeros(n, dtype=np.float32), 0.0
@@ -177,7 +186,8 @@ def main(argv=None):
     ap.add_argument("--report", default="")
     ap.add_argument("--words-json", default="", help="测试/缓存：[[start,end],...]")
     ap.add_argument("--cache", default="", help="ASR 词时间缓存 JSON")
-    ap.add_argument("--whisper-model", default="base")
+    ap.add_argument("--whisper-model", default="small")
+    ap.add_argument("--model-root", default=MODEL_ROOT)
     ap.add_argument("--ffmpeg", default="")
     args = ap.parse_args(argv)
 
@@ -245,7 +255,7 @@ def main(argv=None):
             err = ""
             asr_model = "words-json" if words else ""
         else:
-            words, err = _asr_words(args.source, args.cache or "", args.whisper_model)
+            words, err = _asr_words(args.source, args.cache or "", args.whisper_model, args.model_root)
             asr_model = args.whisper_model if words else ""
         if words is None:
             words = []

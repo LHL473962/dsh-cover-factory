@@ -68,7 +68,7 @@ def main():
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--auto-gain", action="store_true", help="按人声/伴奏活跃帧中位电平自动算增益（覆盖原比例）")
     ap.add_argument("--target-db", type=float, default=None, help="auto-gain 目标差；old 默认走原比例，new 默认 0（人声=伴奏）")
-    ap.add_argument("--vocal-db", type=float, default=0.0, help="在自动/原比例基础上再给一轨加/减增益（模拟推子）")
+    ap.add_argument("--vocal-db", type=float, default=None, help="在自动/原比例基础上再给一轨加/减增益（模拟推子）")
     ap.add_argument("--no-normalize", action="store_true", help="不做 -14 LUFS 归一化（分轨增益直接生效，只防削波）")
     a = ap.parse_args()
 
@@ -76,7 +76,7 @@ def main():
     if a.preset in ("new", "spica"):
         if a.target_db is None:
             a.target_db = 0.0
-        if a.vocal_db == 0.0:
+        if a.vocal_db is None:
             a.vocal_db = 3.0
         a.auto_gain = True
         a.no_normalize = True
@@ -102,6 +102,8 @@ def main():
         gain, ratio = gain_for_ratio(a.vocal, a.inst, a.source_vocal)
         print("ratio_src=%.2f dB  gain=%.2f dB" % (ratio, gain))
     # 用统一的 placeholder 替换
+    if a.vocal_db is None:
+        a.vocal_db = 0.0
     gain += a.vocal_db
     if a.preset in ("old", "default"):
         g = chain_default().replace("[0:a]aresample=44100,volume=%sdB", "[0:a]aresample=44100,volume=%.2fdB" % gain)

@@ -5,7 +5,7 @@
 ## 1. 人声/伴奏比例：old = unity；new = active +3
 
 **old 预设**（默认 / kim 库）：分离出来的两条 stem 相加 ≡ 原曲，两条都保持 0 dB，不做"把人声拉平到伴奏"。
-**new 预设**（bs317 库）：按活跃帧把「人声=伴奏」对齐，再固定 +3 dB；这是刻意的新标准，不是把 old 的比例改坏。
+**new 预设**（bs317 库）：按活跃帧把「人声=伴奏」对齐，再叠加每首歌可配的 `options.vocalDb`（默认 0；要 +3 就显式设 3）。这是刻意的新标准，不是把 old 的比例改坏。
 
 - 曾经的做法（把人声 RMS 拉到与伴奏相等）会让比例完全走样：人声被抬高 6–10 dB。
 - 判断方法：vocal + instrumental 与原始混音做相关，应接近 1.0000（实测 1.0000）。
@@ -90,7 +90,7 @@ gain = (instActiveDb + targetDb) - vocalActiveDb
 - 手工混音：`manual_mix.py --auto-gain --target-db -4`
 - 网页：每轨“自动增益”按钮 + 总线“人声目标”滑杆
 
-> 引擎 new 预设使用同一套 active 口径，但固定 `targetDb=0`（人声=伴奏）后再 `vocalDb=+3`，即 `ratioActive=+3dB`；
+> 引擎 new 预设使用同一套 active 口径，`targetDb=0` 固定，最终 `ratioActive=options.vocalDb`（默认 0，可设 +3）；
 > old 预设不走 auto-gain，保持 unity 原比例。
 
 

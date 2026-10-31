@@ -140,6 +140,8 @@ def run(job, cfg):
     hum_fallback = False
     hum_kept = None
     hum_gain = None
+    hum_asr_model = ""
+    hum_effective = hum_mode
     hum_segments = ""
     if hum_mode == "manual":
         raw_seg = str(opts.get("hummingSegments") or "").strip()
@@ -163,6 +165,8 @@ def run(job, cfg):
             rep_h = base.read_json(hum_report, {}) or {}
             hum_kept = rep_h.get("hummingKeptRatio")
             hum_gain = rep_h.get("gain")
+            hum_asr_model = rep_h.get("asrModel") or ""
+            hum_effective = rep_h.get("hummingMode") or hum_mode
             hum_fallback = bool(rep_h.get("fallback"))
             if rep_h.get("warning"):
                 base.log("convert: " + str(rep_h["warning"]))
@@ -178,8 +182,10 @@ def run(job, cfg):
         "durationSec": info.get("duration_sec"),
         "indexRate": ccfg.get("index_rate", 0.75),
         "vocalAlignDb": round(float(align_db), 3) if align_db is not None else None,
-        "hummingMode": hum_mode,
+        "hummingMode": hum_effective,
+        "hummingRequested": hum_mode,
         "hummingKeptRatio": hum_kept,
+        "hummingAsrModel": hum_asr_model,
         "hummingGain": hum_gain,
         "hummingFallback": hum_fallback,
         "elapsed_sec": res["elapsed_sec"],
