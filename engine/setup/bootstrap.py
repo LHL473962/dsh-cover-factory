@@ -650,12 +650,12 @@ def _pick_python_ge(cfg, need=(3, 11), override="", fallback=""):
             return [ap], "%d.%d" % v
     py = shutil.which("py")
     if py:
-        for tag in ("-3.12", "-3.11"):
+        for tag in ("-3.11", "-3.12"):
             cmd = [py, tag]
             v = ver_of(cmd)
             if v >= need:
                 return cmd, "%d.%d" % v
-    for name in ("python3.12", "python3.11", "python"):
+    for name in ("python3.11", "python3.12", "python"):
         p = shutil.which(name)
         if not p:
             continue
@@ -693,11 +693,11 @@ def install_applio_steps(cfg, execute, base_python="", python_override=""):
         return [action("applio", "skipped", "已安装：" + str(ready.get("found")), root)]
     if not execute:
         return [action("applio", "skipped",
-                       "dry-run：加 --yes 安装 Applio %s（约 3–5G / 20–40 分钟）到 %s" % (APPLIO_TAG, root),
+                       "dry-run：加 --yes 安装 Applio %s（约 8G / 10–40 分钟）到 %s" % (APPLIO_TAG, root),
                        root, APPLIO_REPO)]
 
     log("[applio] 目标 %s（tag %s）" % (root, APPLIO_TAG))
-    log("[applio] 警告：需要 3–5G 磁盘、约 20–40 分钟（torch + CUDA + requirements）")
+    log("[applio] 警告：需要约 8G 磁盘、10–40 分钟（torch + CUDA + requirements；实测 8.1G/676s）")
 
     picked, pver = _pick_python_ge(cfg, need=(3, 11), override=python_override, fallback=base_python)
     if not picked:

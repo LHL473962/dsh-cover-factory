@@ -18,10 +18,29 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
     const API = '/api/cover-factory'
-    const STEPS = [5000, 9000, 18000]
-    // 训练耗时：RTX 5060 Laptop 实测（约 0.37 秒/步）→ 5000≈30 分钟 / 9000≈55 分钟 / 18000≈1 小时 50 分
-    const ETA = { 5000: '约 30 分钟', 9000: '约 55 分钟', 18000: '约 1 小时 50 分' }
-    const ETA_HINT = '耗时按 RTX 5060 Laptop 实测（约 0.37 秒/步）；没有可用 GPU 会走 CPU，慢约 10 倍。'
+    // 训练步数：用户自己填（100–100000）；耗时按 RTX 5060 Laptop 实测约 0.37 秒/步
+    const STEP_MIN = 100
+    const STEP_MAX = 100000
+    const SECONDS_PER_STEP = 0.37
+    const fmtMinutes = (m) => {
+      const n = Math.max(1, Math.round(m))
+      if (n < 60) return n + ' 分钟'
+      const h = Math.floor(n / 60)
+      const rest = n % 60
+      return rest ? h + ' 小时 ' + rest + ' 分' : h + ' 小时'
+    }
+    const stepEtaText = (steps) => {
+      const n = Number(steps)
+      if (!Number.isFinite(n) || n <= 0) return '填入步数后显示预计时间'
+      return '预计约 ' + fmtMinutes((n * SECONDS_PER_STEP) / 60) + '（按 ' + SECONDS_PER_STEP + ' 秒/步、RTX 5060 Laptop 实测；没有可用 GPU 会走 CPU，慢约 10 倍）'
+    }
+    const stepEffectText = (steps) => {
+      const n = Number(steps)
+      if (!Number.isFinite(n) || n <= 0) return ''
+      if (n < 3000) return '效果：音色不稳（仅适合验证链路）'
+      if (n < 9000) return '效果：基本可用'
+      return '效果：更稳，但边际递减（再往上提升很小）'
+    }
     // 素材来源：多选，至少 1 个
     const SOURCES = [
       ['folder', '本地目录'],
@@ -53,6 +72,7 @@ window.__ModuleLoader__.load({
       '不要中途关机：引擎每 5 个 epoch 存一次盘，中断后可以用 resume 续训（同一个 job 重新运行选「续跑」）。',
       '磁盘需要预留 ≥ 10G（素材 + 切片 + 特征 + 模型）。',
       '显存 <5G 会先停下来让你选：减步数 或 加 --allow-lowmem（引擎侧放行，唯一的硬件硬闸）；5–8G 只警告，继续跑。',
+      '不支持 AMD（Radeon）显卡与 Intel 核显：本管线依赖 CUDA；A 卡只能用 CPU 跑（极慢，不推荐）。',
       '没有可用 GPU 会走 CPU，慢约 10 倍（9000 步约 9 小时）。',
       'RTX 50 系必须用 torch cu128；30/40 系用 cu118/cu121；插件会按你的显卡自动推荐（设置页体检展开可看，命令可直接复制）。',
     ]
@@ -139,7 +159,9 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('')
       const [form, setForm] = React.useState({
         singer: '', folder: '', target: '', refs: '',
-        steps: 9000, sources: ['folder'], copyrightAck: false, refSearch: false, voice: 'auto', separateModel: 'kim',
+        // steps 的初值取 settings.defaultSteps（旧配置兼容），用户没手动改过才允许被设置值覆盖
+        steps: 9000, stepsTouched: false,
+        sources: ['folder'], copyrightAck: false, refSearch: false, voice: 'auto', separateModel: 'kim',
         clients: ALL_CLIENTS.slice(), keyword: '',
       })
       // 风险提示默认收起
@@ -168,6 +190,11 @@ window.__ModuleLoader__.load({
           setSt(d.settings || null)
           setEngine(d.engine || null)
           if (typeof d.running === 'number') setRunning(d.running)
+          // 新建卡片的步数初值：旧配置里如果还有 defaultSteps，就用它（设置页不再展示这个字段）
+          const seed = Number(d.settings && d.settings.defaultSteps)
+          if (Number.isFinite(seed) && seed > 0) {
+            setForm((prev) => (prev.stepsTouched ? prev : Object.assign({}, prev, { steps: seed })))
+          }
         } catch (e) { setMsg('读设置失败：' + e.message) }
       }, [])
 
@@ -264,10 +291,16 @@ window.__ModuleLoader__.load({
           setMsg('至少选 1 个素材来源：本地目录 / 本机客户端 / B站搜索（可多选）')
           return
         }
+        const stepsNum = Number(String(form.steps == null ? '' : form.steps).trim())
+        if (!Number.isInteger(stepsNum) || stepsNum < STEP_MIN || stepsNum > STEP_MAX) {
+          setBusy('')
+          setMsg('训练步数要是 ' + STEP_MIN + '–' + STEP_MAX + ' 之间的整数，现在是「' + String(form.steps == null ? '' : form.steps) + '」。')
+          return
+        }
         const body = {
           singer: form.singer,
           target: form.target,
-          steps: form.steps,
+          steps: stepsNum,
           sources: picked,
           refs: refLines,
         }
@@ -327,6 +360,14 @@ window.__ModuleLoader__.load({
       const healthText = health === 'green' ? '依赖齐全' : health === 'yellow' ? '缺可选依赖' : health === 'red' ? '缺必需依赖' : (doctor && doctor.ok === false ? '体检没跑成' : '体检中…')
       // 体检红 → 不让建 job（服务端 POST /jobs/create 也会用同一条规则拦一次）
       const depsBlocked = !!(doctor && doctor.ok !== false && doctor.health === 'red')
+      // A 卡 / Intel 核显：本管线依赖 CUDA，不支持（服务端也会拦 UNSUPPORTED_GPU）
+      const gpuVendor = String((doctor && (doctor.gpuVendor || doctor.gpu_vendor)) || '').toLowerCase()
+      const gpuUnsupported = gpuVendor === 'amd' || gpuVendor === 'intel'
+      const gpuVendorLabel = gpuVendor === 'amd' ? 'AMD（Radeon）' : (gpuVendor === 'intel' ? 'Intel 核显' : '')
+      const createBlocked = depsBlocked || gpuUnsupported
+      const blockReason = gpuUnsupported
+        ? ('检测到 ' + gpuVendorLabel + ' 显卡：本管线依赖 CUDA；A 卡/核显只能用 CPU 跑（极慢，不推荐）。')
+        : (depsBlocked ? '依赖体检是红的：先装依赖' : '')
 
       const healthBar = h('div', null,
         h('div', { style: S.bar },
@@ -336,8 +377,11 @@ window.__ModuleLoader__.load({
             onClick: () => setHealthOpen(!healthOpen),
           },
             h('span', { style: S.dot(healthColor) }),
-            '依赖体检：' + healthText + (healthOpen ? ' ▴' : ' ▾'),
+            '依赖体检：' + (gpuUnsupported ? '不支持当前显卡（' + gpuVendorLabel + '）' : healthText) + (healthOpen ? ' ▴' : ' ▾'),
           ),
+          gpuUnsupported
+            ? h('span', { style: { color: '#F87171' } }, 'A 卡/核显不支持 CUDA：只能 CPU，极慢')
+            : null,
           health === 'red' && doctor.missingRequired && doctor.missingRequired.length
             ? h('span', { style: { color: '#F87171' } }, '缺：' + doctor.missingRequired.join('、'))
             : null,
@@ -416,13 +460,6 @@ window.__ModuleLoader__.load({
               h('label', { style: S.label }, '成品输出目录 outputDir'),
               h('input', { style: S.input, value: st.outputDir || '', onChange: (e) => patch({ outputDir: e.target.value }) }),
               h('div', { style: S.hint }, '默认 桌面/翻唱工厂；成品 mp3 与报告都放这里'),
-            ),
-            h('div', { style: S.field },
-              h('label', { style: S.label }, '默认训练步数 defaultSteps'),
-              h('select', { style: S.input, value: st.defaultSteps || 9000, onChange: (e) => patch({ defaultSteps: Number(e.target.value) }) },
-                STEPS.map((n) => h('option', { key: n, value: n }, String(n) + '（' + ETA[n] + '）')),
-              ),
-              h('div', { style: S.hint }, ETA_HINT),
             ),
           ),
           h('label', { style: S.check },
@@ -572,7 +609,7 @@ window.__ModuleLoader__.load({
             },
               SEPARATE_MODELS.map(([id, label]) => h('option', { key: id, value: id }, label)),
             ),
-            h('div', { style: S.hint }, 'kim 是默认最稳的分离；bs317（BS-RoFormer ep317）串音指标更低，但实验结论是**没有可测的听感提升**——想试可以选，日常建议保持 kim。'),
+            h('div', { style: S.hint }, 'kim 是默认最稳的分离；bs317（BS-RoFormer ep317）串音指标更低，但实验结论是没有可测的听感提升——想试可以选，日常建议保持 kim。'),
           ),
           (form.sources || []).includes('folder')
             ? h('div', { style: S.field },
@@ -587,11 +624,19 @@ window.__ModuleLoader__.load({
             h('div', { style: S.hint }, '例：D:/素材/目标曲.wav；不填只能训到 train，出不了成品'),
           ),
           h('div', { style: S.field },
-            h('label', { style: S.label }, '训练步数'),
-            h('select', { style: S.input, value: form.steps, onChange: (e) => setForm(Object.assign({}, form, { steps: Number(e.target.value) })) },
-              STEPS.map((n) => h('option', { key: n, value: n }, String(n) + '（' + ETA[n] + '）')),
-            ),
-            h('div', { style: S.hint }, ETA_HINT),
+            h('label', { style: S.label }, '训练步数（100–100000，自己填）'),
+            h('input', {
+              style: S.input,
+              type: 'number',
+              min: STEP_MIN,
+              max: STEP_MAX,
+              step: 1,
+              value: form.steps,
+              onChange: (e) => setForm(Object.assign({}, form, { steps: e.target.value, stepsTouched: true })),
+            }),
+            h('div', { style: S.hint }, stepEtaText(form.steps)),
+            stepEffectText(form.steps) ? h('div', { style: S.hint }, stepEffectText(form.steps)) : null,
+            h('div', { style: S.hint }, '没有「推荐值」：音色主要看素材；步数只影响收敛程度，按上面的时间和效果自己权衡。'),
           ),
           h('div', { style: { flex: '1 1 100%' } },
             h('label', { style: S.label }, '好球曲（选填）'),
@@ -648,7 +693,15 @@ window.__ModuleLoader__.load({
             ? h('div', { style: S.riskBody }, RISK_LINES.map((line, i) => h('div', { key: i, style: S.riskLine }, '· ' + line)))
             : null,
         ),
-        depsBlocked
+        gpuUnsupported
+          ? h('div', { style: S.blockNotice },
+            h('div', { style: { color: '#F87171', fontWeight: 600, marginBottom: 4 } }, '当前显卡不支持：' + gpuVendorLabel),
+            h('div', null, '本管线依赖 NVIDIA CUDA，A 卡/核显只能走 CPU（极慢，不推荐）。换 NVIDIA 显卡后再建 job。'),
+            h('div', { style: S.mono }, '· 检测来源：依赖体检的 gpu_vendor（doctor 返回）'),
+            h('div', { style: { marginTop: 6 } }, '换卡后点顶部「重新体检」；体检识别到 NVIDIA 就能建了。'),
+          )
+          : null,
+        !gpuUnsupported && depsBlocked
           ? h('div', { style: S.blockNotice },
             h('div', { style: { color: '#F87171', fontWeight: 600, marginBottom: 4 } }, '依赖没齐，先别建 job（建了也跑不起来）'),
             h('div', null, '缺必需：' + ((doctor.missingRequired && doctor.missingRequired.length) ? doctor.missingRequired.join('、') : (doctor.missing || []).join('、') || '未知')),
@@ -658,12 +711,14 @@ window.__ModuleLoader__.load({
           : null,
         h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', marginTop: 12 } },
           h('button', {
-            style: Object.assign({}, S.btn, (busy === 'create' || depsBlocked) ? { opacity: 0.5, cursor: 'not-allowed' } : {}),
-            disabled: busy === 'create' || depsBlocked,
-            title: depsBlocked ? '依赖体检是红的：先装依赖' : '',
+            style: Object.assign({}, S.btn, (busy === 'create' || createBlocked) ? { opacity: 0.5, cursor: 'not-allowed' } : {}),
+            disabled: busy === 'create' || createBlocked,
+            title: blockReason,
             onClick: submit,
-          }, busy === 'create' ? '提交中…' : (depsBlocked ? '依赖没齐，不能建' : '新建任务')),
-          h('span', { style: S.muted }, depsBlocked ? '装完点顶部「重新体检」。' : '建完不会自动开跑：在任务表点「运行」。'),
+          }, busy === 'create' ? '提交中…' : (gpuUnsupported ? '显卡不支持，不能建' : (depsBlocked ? '依赖没齐，不能建' : '新建任务'))),
+          h('span', { style: S.muted }, gpuUnsupported
+            ? 'A 卡/核显只能 CPU 跑（极慢），本插件直接拦住不让建。'
+            : (depsBlocked ? '装完点顶部「重新体检」。' : '建完不会自动开跑：在任务表点「运行」。')),
         ),
       )
 

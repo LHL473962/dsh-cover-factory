@@ -75,6 +75,8 @@ if cmd == 'doctor':
     ]
     print(json.dumps({
         'ok': not red,
+        # A 卡测试：STANDIN_GPU_VENDOR=amd|intel|nvidia（默认 nvidia）
+        'gpu_vendor': os.environ.get('STANDIN_GPU_VENDOR', 'nvidia'),
         'checks': checks,
         'hints': ['见 docs/INSTALL.md 的路径 B'] + (['先装 Applio 再重新体检'] if red else []),
         'suggestedTorch': {

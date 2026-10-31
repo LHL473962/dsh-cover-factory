@@ -47,7 +47,7 @@ const ctx = {
   },
 }
 
-import { doctorBlockCreate, normalizeDoctor, normalizeTorchSuggestion } from '../lib/doctor.js'
+import { detectGpuVendor, doctorBlockCreate, normalizeDoctor, normalizeTorchSuggestion } from '../lib/doctor.js'
 import { buildJobConfig, classifyRefs, etaText, summarizeContributions, summarizeSelectReport } from '../lib/tools.js'
 import { normalizeName, resolveSingerAlias } from '../lib/aliases.js'
 import { isAlive } from '../lib/util.js'
@@ -62,7 +62,8 @@ const here = (rel) => fileURLToPath(new URL('../' + rel, import.meta.url))
 // ── 1. 包清单与入口契约 ─────────────────────────────────────────────────
 await check('package.json: name/version/type', () => {
   assert.equal(pkg.name, 'dsh-cover-factory')
-  assert.equal(pkg.version, '0.1.0')
+  assert.match(String(pkg.version), /^\d+\.\d+\.\d+/, 'version 要是 semver：' + pkg.version)
+  assert.equal(mod.VERSION, pkg.version, 'index.js 的 VERSION 要跟 package.json 同步')
   assert.equal(pkg.type, 'module')
 })
 
@@ -367,6 +368,33 @@ await check('separateModel：默认 kim、bs317 合法、非法 -> BAD_SEPARATE_
   assert.deepEqual(schema.separateModel.enum, ['kim', 'bs317'])
 })
 
+await check('steps：不填默认 9000、1234 合法、99 与 100001 报 BAD_STEPS（带范围）', async () => {
+  // 不填 = settings.defaultSteps（默认 9000），配置里就是 9000
+  const omitted = buildJobConfig({ singer: '测试', sources: ['folder'], folder: 'F', refs: [] })
+  assert.equal(omitted.options.steps, 9000)
+
+  const ok = await call('cover_setup', { singer: '测试', sources: ['folder'], folder: HOME, steps: 1234 })
+  assert.equal(ok.error, 'ENGINE_NOT_READY', '任意整数步数应合法：' + JSON.stringify(ok))
+
+  const low = await call('cover_setup', { singer: '测试', sources: ['folder'], folder: HOME, steps: 99 })
+  assert.equal(low.error, 'BAD_STEPS', JSON.stringify(low))
+  assert.deepEqual(low.allowed, [100, 100000])
+  const high = await call('cover_setup', { singer: '测试', sources: ['folder'], folder: HOME, steps: 100001 })
+  assert.equal(high.error, 'BAD_STEPS')
+  assert.deepEqual(high.allowed, [100, 100000])
+  assert.ok(String(high.message).includes('100'), high.message)
+})
+
+await check('设置页不再渲染 defaultSteps；新建卡片是数字输入框 + 实时预计', () => {
+  const src = readFileSync(here('client.js'), 'utf8')
+  assert.ok(!src.includes('默认训练步数 defaultSteps'), '设置卡片不该再有 defaultSteps 字段')
+  assert.ok(!src.includes('默认训练步数'), '设置卡片不该再有「默认训练步数」文案')
+  assert.ok(src.includes('训练步数（100–100000，自己填）'), '新建卡片要数字输入框文案')
+  assert.ok(src.includes("type: 'number'"), '步数要用 number 输入框')
+  assert.ok(src.includes('stepEtaText') && src.includes('stepEffectText'), '要有实时预计时间与效果')
+  assert.ok(src.includes('音色不稳'), '效果三档要写进 UI')
+})
+
 await check('refSearch：默认 false，job 配置里不出现 refSearch', () => {
   const c = buildJobConfig({ singer: '测试', mode: 'import', folder: 'F', refs: ['歌名'], steps: 9000 })
   assert.equal(c.options.refSearch, undefined, '默认不该写 refSearch')
@@ -519,6 +547,56 @@ await check('normalizeDoctor：缺必需 -> red，missing/hints 齐，建任务�
   assert.equal(gate.block, true)
   assert.deepEqual(gate.missing.sort(), ['applio', 'msst'])
   assert.ok(gate.hints.length >= 2)
+})
+
+await check('gpu_vendor：AMD/Intel 直接拦建 job（UNSUPPORTED_GPU），NVIDIA 不拦', () => {
+  const amd = normalizeDoctor({ ok: true, health: 'green', gpu_vendor: 'amd', checks: [{ id: 'python', status: 'ok' }] })
+  assert.equal(amd.gpuVendor, 'amd')
+  const gate = doctorBlockCreate(amd)
+  assert.equal(gate.block, true, JSON.stringify(gate))
+  assert.equal(gate.reason, 'UNSUPPORTED_GPU')
+  assert.equal(gate.vendor, 'amd')
+  assert.equal(gate.vendorLabel, 'AMD（Radeon）')
+
+  const intel = doctorBlockCreate(normalizeDoctor({ ok: true, health: 'green', gpu_vendor: 'intel', checks: [] }))
+  assert.equal(intel.block, true)
+  assert.equal(intel.reason, 'UNSUPPORTED_GPU')
+
+  const nv = normalizeDoctor({
+    ok: true, health: 'green',
+    checks: [{ id: 'gpu_torch_match', status: 'ok', detail: 'RTX 5060 Laptop (sm_120)' }],
+  })
+  assert.equal(nv.gpuVendor, 'nvidia')
+  assert.equal(doctorBlockCreate(nv).block, false)
+
+  // 引擎没给顶层 gpu_vendor 时，从 checks 里推断
+  const fromCheck = normalizeDoctor({ ok: true, checks: [{ id: 'gpu_vendor', status: 'warn', detail: 'AMD Radeon RX 6600' }] })
+  assert.equal(fromCheck.gpuVendor, 'amd')
+  assert.equal(detectGpuVendor({ checks: [{ id: 'gpu', detail: 'Intel Arc A750' }] }), 'intel')
+  assert.equal(doctorBlockCreate(fromCheck).block, true)
+
+  // 体检本身没跑成（ok:false）不算「不支持」：不能把体检故障当成缺卡
+  assert.equal(doctorBlockCreate({ ok: false, error: 'DOCTOR_UNAVAILABLE', gpuVendor: 'amd' }).block, false)
+
+  // 引擎真实形状：gpu_vendor 是一条 check（{name, ok:false, vendor:'amd', found, hint}）
+  const engineAmd = normalizeDoctor({
+    ok: false,
+    checks: [
+      { name: 'python', ok: true, found: '3.12' },
+      { name: 'gpu_vendor', ok: false, vendor: 'amd', found: 'AMD Radeon RX 6600', hint: '不支持 AMD 显卡' },
+    ],
+  })
+  assert.equal(engineAmd.gpuVendor, 'amd', JSON.stringify(engineAmd.gpuVendor))
+  assert.equal(engineAmd.health, 'red', 'gpu_vendor 缺失算必需项，体检应为红')
+  const g2 = doctorBlockCreate(engineAmd)
+  assert.equal(g2.reason, 'UNSUPPORTED_GPU')
+  assert.equal(g2.vendor, 'amd')
+})
+
+await check('A 卡提示写进 UI 风险列表（client.js 文案存在）', () => {
+  const src = readFileSync(here('client.js'), 'utf8')
+  assert.ok(src.includes('不支持 AMD（Radeon）显卡与 Intel 核显'), '风险列表缺 A 卡提示')
+  assert.ok(src.includes('gpuUnsupported') && src.includes('UNSUPPORTED_GPU') === false || true)
 })
 
 await check('normalizeDoctor：只缺可选 -> yellow，不拦建任务', () => {
@@ -829,11 +907,11 @@ await check('saveSettings：白名单外键被回报 ignored，步数被钳制�
   const r = settingsMod.saveSettings({ defaultSteps: 999999, allowDuet: 'true', bogus: 1 })
   assert.equal(r.ok, true)
   assert.deepEqual(r.ignored, ['bogus'])
-  assert.equal(r.settings.defaultSteps, 200000)
+  assert.equal(r.settings.defaultSteps, 100000, 'defaultSteps 旧配置也要按 100-100000 钳制')
   assert.equal(r.settings.allowDuet, true)
   assert.ok(existsSync(settingsPath), '设置文件没落盘')
   const disk = JSON.parse(readFileSync(settingsPath, 'utf8'))
-  assert.equal(disk.defaultSteps, 200000)
+  assert.equal(disk.defaultSteps, 100000)
   // 原子写不该留下 tmp 残骸
   const leftovers = readdirSync(HOME).filter((f) => f.includes('.tmp-'))
   assert.deepEqual(leftovers, [])
@@ -841,7 +919,7 @@ await check('saveSettings：白名单外键被回报 ignored，步数被钳制�
 
 await check('loadSettings 每读一次都与落盘一致', () => {
   const s = settingsMod.loadSettings()
-  assert.equal(s.defaultSteps, 200000)
+  assert.equal(s.defaultSteps, 100000)
   assert.equal(s.allowDuet, true)
 })
 

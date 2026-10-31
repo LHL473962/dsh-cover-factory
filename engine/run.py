@@ -494,9 +494,20 @@ def probe_hardware(cfg):
 
 
 def hardware_warnings(hw, allow_lowmem=False):
-    """返回 (warnings, decision)。显存 <5G 才给硬闸（exit 2），其余只警告。"""
+    """返回 (warnings, decision)。AMD/Intel 或无 CUDA 的核显 -> GPU_UNSUPPORTED（exit 2）。"""
     warnings = []
     if not hw.get("cuda") or hw.get("cpuFallback"):
+        vendor = str(hw.get("vendor") or "").lower()
+        names = "、".join(hw.get("gpuNames") or []) or hw.get("gpu") or "未识别显卡"
+        if vendor in ("amd", "intel"):
+            label = "AMD 显卡" if vendor == "amd" else "Intel 核显"
+            warnings.append("%s 不支持：检测到 %s，且 CUDA 不可用" % (label, names))
+            return warnings, {
+                "code": "GPU_UNSUPPORTED",
+                "reason": "不支持 AMD 显卡/核显，需要 NVIDIA CUDA：本管线依赖 PyTorch cu128、MSST、RVC。"
+                          "检测到 %s，但 torch CUDA 不可用。请换 NVIDIA 显卡或租用云 GPU；"
+                          "AMD Radeon / Intel 核显都不支持。" % names,
+            }
         warnings.append("未检测到可用 NVIDIA GPU（cpu-fallback）：CPU 训练约慢 10 倍，管线继续跑")
         return warnings, None
     free = hw.get("vramFreeGb")
@@ -550,6 +561,16 @@ def cmd_run(args):
     if getattr(args, "allow_lowmem", False):
         job.setdefault("options", {})["allowLowmem"] = True
     hw = probe_hardware(cfg)
+    if not hw.get("cuda"):
+        try:
+            from setup import checks as _checks
+            _vinfo = _checks.detect_gpu_vendor(cfg)
+            hw["vendor"] = _vinfo.get("vendor") or ""
+            hw["gpuNames"] = _vinfo.get("names") or []
+        except Exception:  # noqa: BLE001
+            hw.setdefault("vendor", "")
+    else:
+        hw.setdefault("vendor", "nvidia")
     job["hw"] = hw
     allow_lowmem = bool((job.get("options") or {}).get("allowLowmem"))
     hw_warnings, hw_decision = hardware_warnings(hw, allow_lowmem)

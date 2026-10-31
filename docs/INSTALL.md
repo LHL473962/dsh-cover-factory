@@ -69,7 +69,7 @@
 | ffmpeg | ✅ | `pip install imageio-ffmpeg`，并把路径写回配置 |
 | 旧版 RVC | ✅ | `git clone --depth 1 --branch <tag>`，再把本机已有权重复制进去 |
 | MSST 代码 + kim 权重 | ✅（--with-models） | clone 到 paths.msst_root；已有跳过；kim 约 871MB，断点续传/失败不中断 |
-| Applio | ✅（--install-applio 或 --install 链） | 固定 tag 3.7.1；git clone 失败回退 codeload zip；venv + torch + requirements；**需要 Python 3.11+**；约 3–5G/20–40 分钟 |
+| Applio | ✅（--install-applio 或 --install 链） | 固定 tag 3.7.1；git clone 失败回退 codeload zip；venv + torch + requirements；**需要 Python 3.11+**；实测 8.1G/676 秒，预留 10G |
 | fairseq 0.12.2 | ✅（--install-fairseq 或 --install 链） | 预编译 zip + sha256；装到 paths.rvc_python 的 site-packages |
 | RVC hubert_base.pt + rmvpe.pt | ✅（--with-models） | 约 181MB + 173MB；已有跳过；URL 在 paths.model_sources，可配镜像 |
 | PyTorch + CUDA 轮子 | ✅（--install 链 / `--install-torch`） | 按显卡 capability 自动选 cu128/cu121/cu118；`--yes` 真装 |
@@ -82,7 +82,7 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 
 ### 已知问题（2026-10-31 实测）
 
-- **Applio 3.7.1 需要 Python 3.11+**：用路径 A 的 `--install-applio --python <3.10>` 时，git clone 被墙后 codeload 回退成功、venv 创建成功，但在 **33 秒 / 约 47MB** 时被版本门拒绝（requirements 的 numpy 2.4.6 仅支持 3.11+）。请用 3.11+ 解释器；本机 `D:/Apps/applio-env` 是 3.11.9。
+- **Applio 3.7.1 需要 Python 3.11+**：用 3.10 显式跑安装器会在 **0 秒**直接 failed（不 clone、不建 venv、不跑 requirements），hint 给 https://www.python.org/downloads/release/python-3119/ 。本机 3.11 实测成功：临时目录、base=D:/Apps/applio-env 的 3.11.9，**676 秒 / 8.1G**，torch 2.11.0+cu128、transformers 5.13.1、faiss 1.14.3、`import core` 全过；体积比预估大，预留 10G。
 - **github.com:443 间歇不可达**：Applio 安装会自动回退 `codeload.github.com` 的固定 tag zip；两者都不通时只能配代理/镜像重试。
 
 ### 只装/重装 torch（先看命令，再加 --yes 真装）
@@ -105,7 +105,7 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 |---|---|---|---|---|---|
 | Python 3.10–3.12 | `python` | 跑 `engine/run.py` | ~30M | PSF | 需自备 |
 | PyTorch 2.x + CUDA 轮子 | `torch_cuda` | 训练 / 推理 | 2.5–3.5G | BSD-3 | ❌ 随显卡选 cuXXX，需自装（见下面「显卡与 torch 版本怎么选」） |
-| Applio | `applio` | RVC 预处理 + 训练 | 代码 ~300M + 依赖 3–5G | MIT | ✅ `setup --install-applio --yes`（需 Python 3.11+） |
+| Applio | `applio` | RVC 预处理 + 训练 | 实测 8.1G（代码 + torch + CUDA libs） | MIT | ✅ `setup --install-applio --yes`（需 Python 3.11+） |
 | fairseq 0.12.2 | （old_rvc 检查） | 旧版 RVC 换声特征提取 | ~12M | MIT | ✅ `setup --install-fairseq --yes`（预编译包） |
 | MSST（MelBand-RoFormer） | `msst` | 人声/伴奏分离 | 代码 ~100M + kim 权重 ~1G | 代码 MIT；权重按模型页条款 | ⚠️ 代码可 clone，**权重自取** |
 | 旧版 RVC（`infer_cli`） | `old_rvc` | 换声推理（rmvpe/pitch） | ~200M | MIT | ✅ bootstrap 会 clone |
@@ -137,6 +137,14 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 2. **引擎内部**三套环境的路径仍写在 `engine/config_default.json` 的 `paths`；也支持逐 job 覆盖（job 配置里的 `config.paths`，引擎会合并）。
 3. 跑 `cover_doctor`：它会逐个点名（找不到哪个 python、哪个权重、ffmpeg 能不能执行）。
 
+## 显卡要求：只支持 NVIDIA（CUDA）
+
+- 本管线依赖 **NVIDIA CUDA**：MSST 分离、Applio 训练、换声都需要 CUDA 内核。
+- **AMD（Radeon）显卡与 Intel 核显不支持**：run 启动检测到「AMD/Intel 且 CUDA 不可用」会写 decision.code=`GPU_UNSUPPORTED` 并**退出码 2**，不会默默退 CPU 跑 10 小时。
+- 完全无独显才走 CPU 回退（极慢，不推荐）；和 A 卡/核显的硬拒绝区分。
+- 插件会读体检里的 `gpu_vendor`：amd/intel 时禁用「新建任务」，服务端返回 `UNSUPPORTED_GPU`。
+- 装好 NVIDIA 驱动后重新体检，`gpu_vendor=nvidia` 再建 job；50 系注意 torch 必须是 cu128。
+
 ## 显卡与 torch 版本怎么选
 
 旧版 RVC（2023 代码）本身**不挑卡**，挑的是 **torch 的 CUDA 版本**：卡再新，这版 torch 没编进对应算力（sm_XX）内核，照样跑不了。
@@ -147,7 +155,9 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 | RTX 40 系（4060–4090） | Ada / sm_89 | 官方 cu118 / cu121 即可 | `cu121`（旧 torch 也行，`cu118` 可替代） | CUDA 11.8 起支持 Ada，**无需打补丁** |
 | RTX 30 系（3060–3090） | Ampere / sm_86 | cu118 最稳 | `cu118` | 兼容性最好的一档 |
 | RTX 20 系及更老（2080 / 1080 …） | Turing / Pascal，sm_75 / 70 / 61 | cu118 | `cu118` | 能跑，速度慢 |
-| 无独显 | — | CPU 版 | `--index-url .../whl/cpu` | 纯 CPU 训练，约慢 **10 倍** |
+| **AMD Radeon（A 卡）** | — | **不支持** | — | 本管线依赖 NVIDIA CUDA；doctor `gpu_vendor` false + run `GPU_UNSUPPORTED` exit 2 |
+| **Intel 核显** | — | **不支持** | — | 同上；没有 NVIDIA 独显时 run 直接 exit 2 |
+| 无独显 | — | CPU 版（不推荐） | `--index-url .../whl/cpu` | 纯 CPU 训练，约慢 **10 倍** |
 
 `cover_doctor` 会按**你这张卡**算出推荐，并在 `suggestedTorch` / `torchInstallCommand` 里返回（设置页体检展开区可以直接复制命令）：
 

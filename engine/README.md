@@ -8,7 +8,7 @@
       run.py                 CLI（init / run / status / cancel / delete / doctor / setup）
       config_default.json    默认参数（模型路径、混音参数、QA 阈值）
       setup/                 依赖体检/安装
-        checks.py            doctor 的 8 项检查（含显卡/torch 架构匹配）
+        checks.py            doctor 的 10 项检查（含显卡厂商/架构匹配、Applio/fairseq）
         bootstrap.py         --check / --install，日志写 setup/setup.log
       stages/                10 个 stage，每个暴露 run(job, cfg) -> dict
         base.py              日志 / subprocess / 幂等签名 / 路径约定
@@ -216,13 +216,15 @@ job 配置（init 的 sources 字段）：
 
 - **run 启动时体检一次**：nvidia-smi 读 GPU 型号 / 显存总量 / 当前空闲显存（没有 nvidia-smi 时用 torch 兜底），
   结果写 `job.json` 的 `hw` 字段和 `logs/hw.log`；没有 NVIDIA GPU 标 `cpuFallback: true`。
-- **无 GPU**：不失败，`[hw] WARNING` 提示 CPU 回退约慢 10 倍，继续跑。
+- **AMD Radeon / Intel 核显**：doctor 的 `gpu_vendor` 直接 false；run 启动发现「AMD/Intel 且 CUDA 不可用」→ decision.code=`GPU_UNSUPPORTED`，**退出码 2**，不默默退 CPU。
+- **完全无独显**：不推荐（CPU 极慢），仍会 `[hw] WARNING` 后 CPU 回退（不是 A 卡/核显误判）。
 - **空闲显存 < 8G**：只警告（可能 OOM），继续跑；建议先关其它 GPU 程序。
 - **空闲显存 < 5G**：退出码 2（`LOW_VRAM`），message 给两种选择：① 减少 `options.steps`；② 加 `--allow-lowmem` 显式放行。
 - **训练开始前**日志会打醒目横幅：显卡将跑满、勿开其它 GPU 程序、插电源/散热、每 5 epoch 存盘、中断可 `run --resume`。
 ### 显卡 / torch 兼容矩阵
 
-doctor 的 `gpu_torch_match` 会对比 `torch.cuda.get_device_capability(0)` 与 `torch.cuda.get_arch_list()`：
+doctor 先跑 `gpu_vendor`（nvidia-smi → PowerShell CIM 兜底）：NVIDIA ok；AMD/Intel false 并给出明确提示。
+`gpu_torch_match` 会对比 `torch.cuda.get_device_capability(0)` 与 `torch.cuda.get_arch_list()`：
 capability 的 `sm_XX` 不在 arch_list 里 = 这个 torch 轮子没有该卡的 kernel（会报 no kernel image / CUDA error），必须换 cu 版本。
 
 | 显卡 | compute capability | 推荐 torch | 说明 |
@@ -231,7 +233,9 @@ capability 的 `sm_XX` 不在 arch_list 里 = 这个 torch 轮子没有该卡的
 | RTX 40 系（Ada） | sm_89 | 官方旧版 cu121 / cu118 可用 | 新 cu128 也可以 |
 | RTX 30 系（Ampere） | sm_86 | cu118 最稳 | cu121 亦可 |
 | RTX 20 系及更老 | sm_75 / 更早 | 可用但慢 | FP16 支持差，建议降步数 |
-| 无独显 | — | CPU 回退 | 约 10 倍慢（`gpu_torch_match` 标 optional） |
+| **AMD Radeon（A 卡）** | — | **不支持** | 本管线依赖 NVIDIA CUDA（PyTorch cu128、MSST、RVC）；doctor false + run exit 2（GPU_UNSUPPORTED） |
+| **Intel 核显** | — | **不支持** | 同上；没有 NVIDIA 独显时 run 直接 exit 2 |
+| 无独显 | — | 不推荐（CPU 回退） | 约 10 倍慢；仍会警告后继续（与 A 卡/核显区分） |
 
 > 旧版 RVC（2.2.231006）的三处兼容补丁（`av` 依赖、`torch.load(..., weights_only=...)`、`index_root` 环境变量）
 > 在新旧 torch 下都兼容，所以**同一套引擎代码 30/40/50 通吃**（本机 old_rvc 已打补丁）。
@@ -298,7 +302,7 @@ doctor 的 `gpu_torch_match` 会带 `suggestedTorch`（按 capability 自动选�
 
 单装某一项：
 
-    python engine/run.py setup --install-applio --python <Python 3.11> --yes   # Applio 训练器（约 3–5G / 20–40 分钟）
+    python engine/run.py setup --install-applio --python <Python 3.11> --yes   # Applio 训练器（实测 8.1G / 约 11 分钟）
     python engine/run.py setup --install-fairseq --yes                       # 旧版 RVC 换声要的 fairseq 0.12.2
     python engine/run.py setup --install-torch --yes                         # 按显卡选 cu 版本
 
@@ -311,7 +315,7 @@ Applio 安装会先按显卡装 torch/torchaudio，再把 requirements 里的 to
 | ffmpeg | 自动（pip imageio-ffmpeg）或手动 | bootstrap 装完会给出可执行文件路径，把它写进 paths.ffmpeg；失败则从 https://www.gyan.dev/ffmpeg/builds/ 下载 |
 | yt-dlp | 自动（pip，在 paths.ytdlp_python 环境里） | 只有 fetch search 抓取模式需要；import 模式不联网 |
 | MSST 代码 + MelBand kim 权重 | ✅（--with-models） | clone 到 paths.msst_root；kim 871MB、hubert 181MB、rmvpe 173MB，已存在跳过、断点续传 |
-| Applio | ✅ setup --install-applio --yes | clone 固定 tag 3.7.1（git 失败时回退 codeload zip）→ venv → torch（按显卡）→ requirements → import core 验证；约 3–5G / 20–40 分钟；需要 Python 3.11+ |
+| Applio | ✅ setup --install-applio --yes | clone 固定 tag 3.7.1（git 失败时回退 codeload zip）→ venv → torch（按显卡）→ requirements → import core 验证；需要 Python 3.11+；**实测 8.1G / 676 秒**（网络快），建议预留 10G |
 | fairseq 0.12.2（旧版 RVC） | ✅ setup --install-fairseq --yes | 预编译 zip（MIT，11.4MB，sha256 校验）解压到 paths.rvc_python 的 site-packages，再装 omegaconf/hydra/sacrebleu 等 |
 | 旧版 RVC 2.2.231006 | 自动 clone + 拷本机权重 | `git clone --branch 2.2.231006 ...`；`hubert_base.pt`/`rmvpe.pt` 从 `paths.rvc_models_src` 递归找并复制；找不到会提示从 `https://huggingface.co/lj1995/VoiceConversionWebUI` 手动下载 |
 | 声库权重 / 分离权重 / 预训练底模 | 一律不自动下载 | 许可各异、体积大 |
@@ -323,7 +327,8 @@ Applio 安装会先按显卡装 torch/torchaudio，再把 requirements 里的 to
 
 - **两个环境别混用**：RVC/换声固定 Python 3.10（本机 rvc-env）；Applio/训练固定 Python 3.11+（本机 D:/Apps/applio-env = 3.11.9）。安装器会自动选 3.11+；若只有 3.10 会在 clone 前直接失败并提示下载 https://www.python.org/downloads/release/python-3119/ 。
 - **github.com:443 间歇被墙**：Applio 的 git clone 失败时会自动回退到 codeload.github.com 的固定 tag zip；如果两者都不通，只能配代理/镜像后重试。
-- **实测（2026-10-31，临时 D:/VoiceData/exp/applio_test + Python 3.10）**：git clone 被墙后 codeload 回退成功（repo 26MB / 225 文件），venv 3.10 创建成功；**33 秒 / 47MB** 时在版本门失败（Applio 3.7.1 需要 Python>=3.11）。改用 3.11 才会进入 torch + requirements 阶段（约 3–5G / 20–40 分钟）。
+- **实测 3.10（显式 --python rvc-env）**：安装器在 **0 秒 / 0 文件**时直接 failed，不 clone、不建 venv、不跑 requirements；step 带 hint 和下载 https://www.python.org/downloads/release/python-3119/ 。
+- **实测 3.11（临时 D:/VoiceData/exp/applio_test311，base=D:/Apps/applio-env 的 3.11.9）**：成功。git clone 被墙 → codeload 回退；torch 2.11.0+cu128 约 5 分钟；requirements 34 条约 5 分钟；`import core` / transformers 5.13.1 / faiss 1.14.3 全过。**总耗时 676 秒，目录 8.1G**（比预估 3–5G 大，建议预留 10G）。
 
 `paths` 覆盖（改 `config_default.json`，或用 `--config 覆盖.json`）：
 

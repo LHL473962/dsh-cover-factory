@@ -330,6 +330,36 @@ await step('装好后重新体检变绿：创建恢复，且缓存不锁死', as
   assert.equal(del.ok, true, JSON.stringify(del))
 })
 
+await step('A 卡：doctor gpu_vendor=amd 时 create 被 UNSUPPORTED_GPU 拦住', async () => {
+  process.env.STANDIN_GPU_VENDOR = 'amd'
+  try {
+    const d = await postJson('/doctor', {})
+    assert.equal(d.json.ok, true, JSON.stringify(d.json))
+    assert.equal(d.json.gpuVendor, 'amd', 'doctor 报告要带 gpuVendor：' + JSON.stringify(d.json).slice(0, 300))
+    assert.equal(d.json.health, 'green', '卡不支持不等于依赖红')
+    const before = (await getJson('/jobs')).json.total
+    const c = await postJson('/jobs/create', {
+      singer: 'A卡', folder: MAT, target: TARGET, steps: 5000, sources: ['folder'],
+    })
+    assert.equal(c.json.ok, false, JSON.stringify(c.json))
+    assert.equal(c.json.error, 'UNSUPPORTED_GPU')
+    assert.equal(c.json.vendor, 'amd')
+    assert.ok(String(c.json.message).includes('CUDA'), c.json.message)
+    const after = (await getJson('/jobs')).json.total
+    assert.equal(after, before, 'A 卡被拦时不该建出 job')
+  } finally {
+    delete process.env.STANDIN_GPU_VENDOR
+  }
+  // 换回 NVIDIA：体检刷新后创建恢复
+  const d2 = await postJson('/doctor', {})
+  assert.equal(d2.json.gpuVendor, 'nvidia', JSON.stringify(d2.json).slice(0, 200))
+  const c2 = await postJson('/jobs/create', {
+    singer: 'N卡恢复', folder: MAT, target: TARGET, steps: 5000, sources: ['folder'],
+  })
+  assert.equal(c2.json.ok, true, JSON.stringify(c2.json))
+  await call('cover_delete', { jobId: c2.json.jobId, mode: 'purge' })
+})
+
 await step('voice：建 job 时写进 job_config.options.voice（默认 auto，male 透传）', async () => {
   const auto = await call('cover_setup', {
     singer: '声部默认', folder: MAT, target: TARGET, steps: 5000, mode: 'import',

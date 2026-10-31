@@ -196,6 +196,87 @@ def check_torch(cfg):
     return {"name": "torch_cuda", "ok": cuda, "found": found, "path": py, "hint": "" if cuda else hint}
 
 
+def _nvidia_smi_exe(cfg):
+    paths = _paths(cfg)
+    cands = [str(paths.get("nvidia_smi") or ""), "nvidia-smi",
+             os.path.join(os.environ.get("WINDIR") or "C:/Windows", "System32", "nvidia-smi.exe")]
+    for cand in cands:
+        if not cand:
+            continue
+        found = shutil.which(cand) or (cand if os.path.isfile(cand) else "")
+        if found:
+            return found
+    return ""
+
+
+def _video_controller_names(timeout=30):
+    ps = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if not ps:
+        return []
+    rc, out = _run([ps, "-NoProfile", "-NonInteractive", "-Command",
+                    "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"], timeout=timeout)
+    names = []
+    for line in out.splitlines():
+        name = line.strip()
+        if not name or name.lower() == "name":
+            continue
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def detect_gpu_vendor(cfg):
+    """返回 {vendor: nvidia|amd|intel|none|unknown, gpu, names, nvidiaSmi}。"""
+    exe = _nvidia_smi_exe(cfg)
+    gpu = ""
+    if exe:
+        rc, out = _run([exe, "--query-gpu=name", "--format=csv,noheader"], timeout=30)
+        if rc == 0:
+            gpu = next((ln.strip() for ln in out.splitlines() if ln.strip()), "")
+    names = [gpu] if gpu else []
+    if not names:
+        names = _video_controller_names()
+    low = " ".join(names).lower()
+    if gpu or "nvidia" in low:
+        vendor = "nvidia"
+    elif "amd" in low or "radeon" in low or "advanced micro devices" in low:
+        vendor = "amd"
+    elif "intel" in low:
+        vendor = "intel"
+    elif names:
+        vendor = "unknown"
+    else:
+        vendor = "none"
+    return {"vendor": vendor, "gpu": gpu or (names[0] if names else ""),
+            "names": names, "nvidiaSmi": exe}
+
+
+def check_gpu_vendor(cfg):
+    info = detect_gpu_vendor(cfg)
+    vendor = info["vendor"]
+    names = info["names"]
+    label = "、".join(names[:3]) if names else "未检测到显卡"
+    amd_hint = ("不支持 AMD 显卡：本管线依赖 CUDA（PyTorch cu128、MSST、RVC）。"
+                "请换 NVIDIA 显卡或租用云 GPU；核显/Intel 同样不支持。")
+    intel_hint = ("不支持 Intel 核显/AMD 显卡：本管线依赖 CUDA（PyTorch cu128、MSST、RVC）。"
+                  "请换 NVIDIA 独立显卡或租用云 GPU；核显同样不支持。")
+    none_hint = ("未检测到可用 GPU：本管线依赖 NVIDIA CUDA（PyTorch cu128、MSST、RVC）。"
+                 "请装 NVIDIA 显卡或租用云 GPU；AMD/Intel 核显不支持。")
+    if vendor == "nvidia":
+        return {"name": "gpu_vendor", "ok": True, "vendor": "nvidia",
+                "found": info["gpu"] or label, "path": info.get("nvidiaSmi") or "",
+                "gpuNames": names, "hint": ""}
+    if vendor == "amd":
+        return {"name": "gpu_vendor", "ok": False, "vendor": "amd", "found": label,
+                "path": "", "gpuNames": names, "hint": amd_hint}
+    if vendor == "intel":
+        return {"name": "gpu_vendor", "ok": False, "vendor": "intel", "found": label,
+                "path": "", "gpuNames": names, "hint": intel_hint}
+    hint = none_hint if vendor == "none" else amd_hint
+    return {"name": "gpu_vendor", "ok": False, "vendor": vendor, "found": label,
+            "path": "", "gpuNames": names, "hint": hint}
+
+
 def check_gpu_torch_match(cfg, probe=None):
     """显卡 compute capability 是否在当前 torch 的 arch_list 里（不匹配 = 跑不了 GPU kernel）。"""
     info = probe if probe is not None else _torch_probe(cfg)
@@ -435,6 +516,7 @@ def run_checks(cfg):
     return [
         check_python(cfg),
         check_torch(cfg),
+        check_gpu_vendor(cfg),
         check_gpu_torch_match(cfg),
         check_ffmpeg(cfg),
         check_msst(cfg),

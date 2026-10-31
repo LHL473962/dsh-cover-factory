@@ -8,7 +8,7 @@
 
 - [ ] 插件目录在 DSH profile 的 `node_modules/dsh-cover-factory`，重启后插件页已启用
 - [ ] 八个工具可见：`cover_doctor / cover_setup / cover_run / cover_status / cover_cancel / cover_list / cover_export / cover_delete`
-- [ ] `settings` 默认值正确：`defaultSteps=9000`、`allowDuet=false`、`autoDownload=false`、`outputDir` 指向桌面/翻唱工厂
+- [ ] `settings` 默认值正确：`defaultSteps=9000`（旧键，仅作新建卡片初值）、`allowDuet=false`、`autoDownload=false`、`outputDir` 指向桌面/翻唱工厂；设置页不渲染 defaultSteps
 - [ ] 引擎就位：`engine/run.py` 存在，Python 可用；GPU 显存 ≥8G（或已知会走 CPU 决策）
 
 ## A. 导入模式端到端（P0）
@@ -76,7 +76,7 @@
 - [ ] 缺歌手 → `ok:false` + `MISSING_SINGER`，message 是中文、可操作
 - [ ] 素材目录不存在 → `FOLDER_NOT_FOUND`；不是目录也给同样清晰的提示
 - [ ] 目标曲路径错 → `TARGET_NOT_FOUND`，提示"要完整文件路径"
-- [ ] steps=999999 → `BAD_STEPS`，提示范围 100–200000、推荐 9000
+- [ ] steps=99 / 100001 → `BAD_STEPS`，提示范围 100–100000（不给推荐值）；steps=1234 合法；不填=9000
 - [ ] 未开 autoDownload 却 `mode:"auto"` → `DOWNLOAD_NOT_ENABLED`，附带"改用 import"的合规建议
 - [ ] 引擎缺失 → `ENGINE_NOT_READY`，说明"插件不用改，装好引擎即可"
 - [ ] 所有 message 不含本机绝对路径（应脱敏为 `<path>`）
@@ -89,7 +89,7 @@
 - [ ] `cover_list` 能列出历史 job、进度、当前阶段、是否有成品
 - [ ] 运行中重复 `cover_run` → `JOB_RUNNING`，不启动第二个进程
 - [ ] `cover_cancel` 后进程树结束，job 标记 cancelled，仍可 resume
-- [ ] 设置里 steps 超过 200000 被夹到 200000，不会写坏配置
+- [ ] 旧配置里的 defaultSteps 超过 100000 被夹到 100000，不会写坏配置
 - [ ] 断网/无代理下 import 模式仍能跑通（引擎不联网）
 - [ ] 磁盘空间不足/目录被占用时，返回明确错误码，不产生半截 job
 

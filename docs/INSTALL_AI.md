@@ -166,7 +166,7 @@ $d.checks | Where-Object { -not $_.ok } | Format-Table name,found,hint
 ```
 
 - 缺 **yt-dlp / ffmpeg / 旧版 RVC / fairseq / Applio / torch**：优先 `python engine/run.py setup --install --with-models --yes`（会按顺序补）。
-- 缺 Applio → `setup --install-applio --python <Python 3.11> --yes`（约 3–5G / 20–40 分钟；Python 3.10 会被版本门拒绝）。
+- 缺 Applio → `setup --install-applio --python <Python 3.11> --yes`（实测 8.1G / 约 11 分钟，预留 10G；Python 3.10 会被版本门立即拒绝）。
 - 缺 fairseq → `setup --install-fairseq --yes`（预编译 MIT 包，装到 paths.rvc_python）。
 - 缺 MSST 权重 → `setup --with-models --yes`；仍失败再按 [`docs/INSTALL.md`](INSTALL.md) 路径 B 手动补。
 - 还不行就停：`E_DOCTOR_RED` / `E_DOCTOR_EXIT`。**不要改 `engine/` 里的代码绕过体检**。

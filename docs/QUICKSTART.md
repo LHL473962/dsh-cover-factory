@@ -20,7 +20,7 @@ cover_setup({ singer: "张三", folder: "<你的素材目录>", target: "<你的
 - 插件目录放到 DSH profile 的 node_modules，路径以你机器的 profile 为准；放对后重启 DSH，插件页里启用 cover-factory。
 - 工具列表里出现 **cover_setup / cover_run / cover_status / cover_cancel / cover_list / cover_export**，就算装好。
 - 引擎 `engine/run.py` 和 Python 环境必须在位。缺了会返回 **ENGINE_NOT_READY**，这是引擎没就位，不是插件坏了。
-- 设置文件：`~/.dsh/cover-factory-settings.json`。键：engineDir / python / outputDir / defaultSteps / allowDuet / autoDownload / workRoot / ffmpeg。改完**下次工具调用生效**，不用重启 DSH。
+- 设置文件：`~/.dsh/cover-factory-settings.json`。键：engineDir / python / outputDir / allowDuet / autoDownload / workRoot / ffmpeg（旧键 defaultSteps 仍兼容，但设置页不展示、只作新建卡片初值）。改完**下次工具调用生效**，不用重启 DSH。
 
 ## 2. 准备素材
 
@@ -33,7 +33,7 @@ cover_setup({ singer: "张三", folder: "<你的素材目录>", target: "<你的
 | 本机客户端选项 | 选了「本机客户端」才用：`clients`（netease / qqmusic / kugou / kuwo，默认全部，`"qq"` 也认）、`keyword`（默认=归一后的歌手名） |
 | 目标歌手声部 | `auto`（默认，按目标曲人声判断）/ `female` / `male`。**男歌手请选 male**，或先用 auto 并确认判断正确 |
 | 分离方案 | `kim`（默认，稳）/ `bs317`（BS-RoFormer ep317，串音更低）。**bs317 目前实验结论：无可测的听感提升，只有串音指标更低**，日常保持 kim |
-| 步数 | 默认 9000；见 §3 |
+| 步数 | 自己填整数（100–100000）；不填默认 9000；见 §3 |
 **素材来源现在可以组合**（新参数 `sources`，至少 1 个）：
 
 ```
@@ -51,21 +51,26 @@ sources: ["folder", "auto"]         # 目录 + B站搜索（要 copyrightAck）
 - 单曲 **≥60 秒**（不足会在智选阶段被排除）；目标曲 **≥30 秒**（质检硬门槛）。
 - 目标曲的分离质量几乎决定成品：优先录音室版 / 官方伴奏版，别用现场大混响、对唱、带主持人口白的版本。
 
-## 3. 步数怎么选
+## 3. 步数：自己填，看时间与效果权衡
 
-| 步数 | 训练耗时（RTX 5060 Laptop 实测，约 0.37 秒/步） | 显存 | 适合 |
-| --- | --- | --- | --- |
-| 5000 | 约 30 分钟 | 7.5G | 先验证素材和音色方向 |
-| 9000 | 约 55 分钟 | 7.5G | 默认，正式出片 |
-| 18000 | 约 1 小时 50 分 | 7.5G | 愿意等，补细节 |
+新建任务卡片的「训练步数」是**数字输入框**，范围 **100–100000**；不填时用旧配置里的 `defaultSteps`（默认 9000）。插件**不给推荐值**，只给两条信息：
 
-- 上表是**墙钟实测**：rime7 145e（约 17800 步）111 分钟、suis5 60e（约 16000 步）95 分钟 → 约 0.37 秒/步。
-- 步数区间 100–200000；其他值按 0.37 秒/步线性估（3000 步约 18 分钟）。
-- 步数不等于"更像"：音色主要看素材。硬件硬闸只有一条：**空闲显存 <5G 且没放行**（`LOW_VRAM`，退出码 2）——二选一：减步数，或引擎加 `--allow-lowmem`；5–8G 只警告，没有可用 GPU 走 CPU（约 10 倍慢，9000 步约 9 小时）。
+1. **预计时间**：按 **0.37 秒/步**（RTX 5060 Laptop 实测）线性换算，输入框下方实时显示。
+   - 换算：`分钟 ≈ 步数 × 0.37 ÷ 60`；9000 ≈ 55 分钟、3000 ≈ 18 分钟、18000 ≈ 1 小时 50 分、5000 ≈ 30 分钟。
+2. **效果档位**（与步数的关系）：
+   - **< 3000**：音色不稳，仅适合验证链路（分离/训练/换声/混音能不能跑通）。
+   - **3000–8000**：基本可用。
+   - **9000+**：更稳，但边际递减（再往上提升很小）。
+
+注意：
+- 步数不等于「更像」：音色主要看素材；步数只影响收敛程度。
 - 上面的时间**只算训练**；分离、特征预处理、换声、混音、质检还要额外时间，素材越多越久。
+- 硬件硬闸只有一条：**空闲显存 <5G 且没放行**（`LOW_VRAM`，退出码 2）——二选一：减步数，或引擎加 `--allow-lowmem`；5–8G 只警告；没有可用 GPU 走 CPU（约 10 倍慢，9000 步约 9 小时）。
+- 设置页**没有**「默认训练步数」了（旧配置里的 `defaultSteps` 仍然兼容，只作为新建卡片的初始值）。
 
 ## 4. 硬件与风险（训练期间必看）
 
+- **不支持 AMD（Radeon）显卡与 Intel 核显**：本管线依赖 **NVIDIA CUDA**；A 卡/核显只能把 torch 跑在 CPU 上（极慢，不推荐）。插件在依赖体检识别到 `gpu_vendor` 是 amd/intel 时，会**直接禁用「新建任务」**并显示原因（服务端也会用 `UNSUPPORTED_GPU` 拦一次）。想用就用 NVIDIA 显卡。
 - 训练时**显卡会跑满（接近 100%）**，显存占用约 **7.5–8G**；笔记本会明显发热、风扇全速，可能降频。
 - 期间**不要开游戏 / 剪辑 / 渲染**等吃显卡的程序，容易 OOM 或崩溃。
 - 请**插着电源**、保持散热；长时间满载对老笔记本有风险（可能过热关机）。
@@ -84,7 +89,7 @@ sources: ["folder", "auto"]         # 目录 + B站搜索（要 copyrightAck）
 | MISSING_SINGER | 没给歌手名 | 补 singer |
 | MISSING_FOLDER / FOLDER_NOT_FOUND | import 模式没给目录，或路径不是文件夹 | 给一个存在的素材文件夹 |
 | TARGET_NOT_FOUND | 目标曲路径不对 | 给音频文件的完整路径 |
-| BAD_STEPS | 步数不在 100–200000 | 用 5000 / 9000 / 18000 |
+| BAD_STEPS | 步数不是 100–100000 的整数 | 自己填一个范围内的整数（不填默认 9000），别照搬档位 |
 | ENGINE_NOT_READY | 找不到 engine/run.py 或 Python 不可用 | 把引擎装好；插件不用改 |
 | DOWNLOAD_NOT_ENABLED | 抓取模式没显式开启 | 改用 import；要开见 FAQ Q6，风险自负 |
 | JOB_RUNNING | 这个 job 已经在跑 | 别重复 cover_run，先 cover_status |
