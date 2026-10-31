@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """stage 7 mix：把换声人声和目标曲伴奏按固化混音链合成。
 
-链与 <DATA_DIR>/out/tuning/mix_unity.sh 一致（见 assets/commands.py mix_filter）：
+链与本地调音脚本一致（见 assets/commands.py mix_filter）：
 人声 0dB + highpass 45 + 260Hz -1.2 + 9k +1.6 + 2:1 轻压缩；
 IR 1.2s 湿 30% 返回加宽 1.8x；伴奏 0dB + 2.8k 让位 -1 + 加宽 1.15x；
 总线 1.3:1 glue -> 静态等响 (-14 LUFS) -> limiter -1.5dB。
@@ -86,6 +86,8 @@ def run(job, cfg):
     opts = job.get("options") or {}
     shift = base.clamp_int(opts.get("shift", 0), -12, 12)
     ir = (cfg.get("paths") or {}).get("room_ir") or ""
+    if ir:
+        ir = os.path.expanduser(ir)
     ir_used = base.file_ok(ir)
     if not ir_used:
         base.log("mix: 没找到 IR（%s），本次不带卷积混响" % ir)

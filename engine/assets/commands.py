@@ -3,9 +3,9 @@
 
 严格移植现有脚本的调用方式，不新增步骤：
 - 分离：D:/Apps/MSST/01_人声分离_MSST-GUI/inference.py
-- 训练：D:/Apps/_dl/applio/Applio-main/dsh_rvc2.py（env SUIS_MODEL / SUIS_DATASET）
+- 训练：Applio 根目录的 dsh_rvc2.py（仓库 engine/vendor/applio 提供，env SUIS_MODEL / SUIS_DATASET）
 - 换声：D:/Apps/_dl/old_rvc/rvc/tools/infer_cli.py（env weight_root / index_root）
-- 混音：<DATA_DIR>/out/tuning/mix_unity.sh 的 filter graph
+- 混音：本地调音脚本的 filter graph
 """
 
 import os

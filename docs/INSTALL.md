@@ -261,3 +261,27 @@ Applio 的特征提取依赖 `fairseq`。Windows + Python 3.10 上没有官方 w
 ### 不装训练能不能用
 
 可以先只跑 **分离 + 素材筛选**（`cover_run to=select`）验证环境；但**出成品必须训练**（或复用已有声库缓存）。
+
+
+## 路径配置（必读）
+
+`engine/config_default.json` 只放**可移植默认值**（空路径 / `python` / `ffmpeg`）。
+把你自己机器的路径写进 **`engine/config.local.json`**（已 gitignore，不会被提交）：
+
+```json
+{
+  "paths": {
+    "python": "C:/Python310/python.exe",
+    "ffmpeg": "ffmpeg",
+    "msst_root": "...", "msst_python": "...", "msst_config": "...", "msst_checkpoint": "...",
+    "applio_root": "...", "applio_python": "...",
+    "rvc_root": "...", "rvc_python": "...", "rvc_hubert": "...", "rvc_rmvpe": "...",
+    "bankDir": "~/.dsh/cover-factory/banks"
+  }
+}
+```
+
+加载顺序：`config_default.json` → `config.local.json` → job 的 `--config`。
+写完跑一次 `cover_doctor` / `python engine/run.py doctor`，全绿再建任务。
+
+打包自检：`node tests/package.mjs`（检查关键文件、本机路径泄漏、文档引用）。

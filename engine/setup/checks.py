@@ -294,7 +294,15 @@ def check_msst(cfg):
 def check_applio(cfg):
     paths = _paths(cfg)
     root = paths.get("applio_root") or ""
-    script = os.path.join(root, "dsh_rvc2.py") if root else ""
+    # 驱动解析：显式 paths.applio_driver → <applio_root>/dsh_rvc2.py → 仓库自带 vendor 副本
+    script = paths.get("applio_driver") or ""
+    if not script and root:
+        local = os.path.join(root, "dsh_rvc2.py")
+        if os.path.isfile(local):
+            script = local
+    if not script:
+        script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "vendor", "applio", "dsh_rvc2.py")
     python = paths.get("applio_python") or ""
     missing = []
     if not (root and os.path.isdir(root)):

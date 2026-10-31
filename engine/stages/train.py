@@ -124,8 +124,10 @@ def missing_deps(cfg):
     root = paths.get("applio_root") or ""
     if not root or not os.path.isdir(root):
         missing.append("paths.applio_root=" + str(root))
-    elif not os.path.isfile(os.path.join(root, "dsh_rvc2.py")):
-        missing.append("dsh_rvc2.py 不存在: " + os.path.join(root, "dsh_rvc2.py"))
+    elif not (os.path.isfile(os.path.join(root, "dsh_rvc2.py"))
+              or os.path.isfile(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                             "vendor", "applio", "dsh_rvc2.py"))):
+        missing.append("dsh_rvc2.py 不存在：<applio_root>/dsh_rvc2.py 或 engine/vendor/applio/dsh_rvc2.py 都没有")
     py = paths.get("applio_python") or ""
     if not py or not os.path.isfile(py):
         missing.append("paths.applio_python=" + str(py))
@@ -158,7 +160,8 @@ def _metrics_from_meta(meta):
 
 def bank_dir(cfg):
     paths = cfg.get("paths") or {}
-    return str(paths.get("bankDir") or paths.get("bank_dir") or "").rstrip("/\\")
+    raw = str(paths.get("bankDir") or paths.get("bank_dir") or "").rstrip("/\\")
+    return os.path.expanduser(raw) if raw else ""
 
 
 def bank_singer_dir(cfg, singer):

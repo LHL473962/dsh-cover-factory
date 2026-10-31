@@ -1,35 +1,28 @@
 {
   "version": 1,
   "paths": {
-    "python": "D:/Apps/rvc-env/python.exe",
+    "python": "python",
     "ffmpeg": "ffmpeg",
-    "ffmpeg_fallbacks": [
-      "<DATA_DIR>/tools/bin/ffmpeg.exe",
-      "D:/Apps/MSST/01_人声分离_MSST-GUI/env/Library/bin/ffmpeg.exe",
-      "ffmpeg"
-    ],
-    "msst_root": "D:/Apps/MSST/01_人声分离_MSST-GUI",
-    "msst_python": "D:/Apps/MSST/01_人声分离_MSST-GUI/env/python.exe",
-    "msst_config": "D:/Apps/MSST/01_人声分离_MSST-GUI/configs/config_vocals_mel_band_roformer_kim.yaml",
-    "msst_checkpoint": "D:/Apps/MSST/01_人声分离_MSST-GUI/pretrain/MelBandRoformer_kim.ckpt",
-    "bs317_config": "D:/Apps/MSST/01_人声分离_MSST-GUI/configs/model_bs_roformer_ep_317_sdr_12.9755.yaml",
-    "bs317_checkpoint": "D:/Apps/MSST/01_人声分离_MSST-GUI/pretrain/model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-    "applio_root": "D:/Apps/_dl/applio/Applio-main",
-    "applio_python": "D:/Apps/applio-env/Scripts/python.exe",
-    "rvc_root": "D:/Apps/_dl/old_rvc/rvc",
-    "rvc_python": "D:/Apps/rvc-env/python.exe",
-    "room_ir": "<DATA_DIR>/out/tuning/room_ir.wav",
-    "export_dir": "",
+    "ffmpeg_fallbacks": [],
+    "msst_root": "",
+    "msst_python": "",
+    "msst_config": "",
+    "msst_checkpoint": "",
+    "bs317_config": "",
+    "bs317_checkpoint": "",
+    "applio_root": "",
+    "applio_python": "",
+    "applio_driver": "",
+    "rvc_root": "",
+    "rvc_python": "",
+    "rvc_hubert": "",
+    "rvc_rmvpe": "",
     "ytdlp_python": "python",
     "ytdlp_python_fallbacks": [],
     "ncmdump_python": "",
     "ncmdump_python_fallbacks": [],
-    "bankDir": "<DATA_DIR>/house/banks/",
-    "nvidia_smi": "",
-    "msst_inference": "",
-    "rvc_models_src": "D:/Apps/rvc-models",
-    "rvc_hubert": "",
-    "rvc_rmvpe": "",
+    "bankDir": "~/.dsh/cover-factory/banks",
+    "room_ir": "",
     "model_sources": {
       "msst_repo": "https://github.com/ZFTurbo/Music-Source-Separation-Training.git",
       "melband_kim": "https://huggingface.co/KimberleyJSN/melbandroformer/resolve/main/MelBandRoformer.ckpt",
@@ -49,7 +42,20 @@
     "analysis_sr": 16000
   },
   "fetch": {
-    "audio_exts": [".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wma", ".aif", ".aiff", ".ape", ".wv"],
+    "audio_exts": [
+      ".wav",
+      ".flac",
+      ".mp3",
+      ".m4a",
+      ".aac",
+      ".ogg",
+      ".opus",
+      ".wma",
+      ".aif",
+      ".aiff",
+      ".ape",
+      ".wv"
+    ],
     "require_copyright_ack": true,
     "search_api": "https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=",
     "search_timeout_sec": 20,
@@ -59,7 +65,15 @@
     "default_limit": 8,
     "min_duration_sec": 60,
     "max_duration_sec": 480,
-    "exclude_title_keywords": ["伴奏", "off vocal", "offvocal", "instrumental", "inst", "カラオケ", "karaoke"],
+    "exclude_title_keywords": [
+      "伴奏",
+      "off vocal",
+      "offvocal",
+      "instrumental",
+      "inst",
+      "カラオケ",
+      "karaoke"
+    ],
     "local_client_dirs": [],
     "local_client_max_depth": 3,
     "local_client_max_files": 2000,
@@ -87,10 +101,10 @@
     "stem_check": {
       "clip_sec": 60,
       "vocal_perc_max": 0.28,
-      "vocal_drums_perc": 0.30,
+      "vocal_drums_perc": 0.3,
       "inst_gap": 0.08,
       "swap_margin": 0.03,
-      "vocal_loud_db": 0.0
+      "vocal_loud_db": 0
     },
     "extract_instrumental": true,
     "force_cpu": false,
@@ -98,23 +112,29 @@
     "timeout_sec": 7200
   },
   "select": {
-    "low_band": [60.0, 165.0],
-    "high_band": [165.0, 500.0],
+    "low_band": [
+      60,
+      165
+    ],
+    "high_band": [
+      165,
+      500
+    ],
     "bimodal_share": 0.2,
     "bimodal_ratio": 1.5,
     "single_voice_share": 0.8,
-    "voice_median_split": 200.0,
+    "voice_median_split": 200,
     "stereo_corr_min": 0.3,
-    "min_duration_sec": 60.0,
-    "ref_weight": 6.0,
-    "outlier_weight": 3.0,
-    "target_weight": 1.0,
-    "timbre_semitone_tol": 2.0,
+    "min_duration_sec": 60,
+    "ref_weight": 6,
+    "outlier_weight": 3,
+    "target_weight": 1,
+    "timbre_semitone_tol": 2,
     "centroid_tol": 0.35,
     "max_songs": 60
   },
   "clean": {
-    "silence_db": -45.0,
+    "silence_db": -45,
     "trim_pad_ms": 120,
     "highpass": 45,
     "sample_rate": 44100,
@@ -123,7 +143,10 @@
   "dataset": {
     "weight_repeat": 1,
     "max_files": 800,
-    "pitch_percentiles": [5, 95],
+    "pitch_percentiles": [
+      5,
+      95
+    ],
     "timeout_sec": 900
   },
   "train": {
@@ -138,7 +161,7 @@
     "save_every_epoch": 5,
     "sample_rate": 40000,
     "index_algorithm": "Auto",
-    "min_vram_gb": 8.0,
+    "min_vram_gb": 8,
     "allow_cpu": false,
     "timeout_sec": 43200,
     "pretrained_files": [
@@ -153,13 +176,13 @@
     "index_rate": 0.75,
     "protect": 0.33,
     "filter_radius": 3,
-    "rms_mix_rate": 1.0,
+    "rms_mix_rate": 1,
     "resample_sr": 0,
     "timeout_sec": 3600
   },
   "mix": {
-    "target_lufs": -14.0,
-    "headroom_db": 1.0,
+    "target_lufs": -14,
+    "headroom_db": 1,
     "limiter_db": -1.5,
     "limiter_attack_ms": 0.1,
     "limiter_release_ms": 50,
@@ -171,24 +194,38 @@
     "presence": true,
     "presence_freq": 9000,
     "presence_gain_db": 1.6,
-    "compressor": { "threshold_db": -18, "ratio": 2.0, "attack_ms": 10, "release_ms": 120 },
+    "compressor": {
+      "threshold_db": -18,
+      "ratio": 2,
+      "attack_ms": 10,
+      "release_ms": 120
+    },
     "ir_wet": 0.3,
     "ir_widen": 1.8,
-    "inst_duck_db": -1.0,
+    "inst_duck_db": -1,
     "inst_widen": 1.15,
     "glue_ratio": 1.3,
     "glue_threshold_db": -15,
     "timeout_sec": 1800
   },
   "qa": {
-    "loudness_target": -13.0,
+    "loudness_target": -13,
     "loudness_tol": 1.5,
     "peak_max_db": -0.5,
-    "gap_per_min": 12.0,
-    "min_duration_sec": 30.0,
-    "range_semitones": 6.0,
+    "gap_per_min": 12,
+    "min_duration_sec": 30,
+    "range_semitones": 6,
     "range_coverage": 0.7,
-    "voice_ranges": { "male": [80, 400], "female": [150, 600] },
+    "voice_ranges": {
+      "male": [
+        80,
+        400
+      ],
+      "female": [
+        150,
+        600
+      ]
+    },
     "timeout_sec": 900
   },
   "export": {
