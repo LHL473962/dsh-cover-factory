@@ -235,3 +235,29 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 | yellow，缺 `ytdlp` | 只有抓取模式受影响；import 模式不用它，可忽略。 |
 | 建 job 被拒 `DEPS_MISSING` | 体检 red 且没过期。装完点「重新体检」；缓存 10 分钟自动过期。 |
 | 装完仍 red | 检查是否装进了**另一个** Python 环境；`paths.python` 和 `paths.*_python` 可能不是同一个。 |
+
+
+## 训练链（Applio）：驱动已随仓库分发
+
+训练/换声依赖 **Applio**，但训练驱动（`dsh_rvc2.py`）**已经在仓库里**：
+
+```
+engine/vendor/applio/dsh_rvc2.py
+```
+
+引擎解析顺序：`paths.applio_driver` → `<applio_root>/dsh_rvc2.py` → 仓库自带 vendor 副本。
+所以不需要作者额外发文件；把 Applio 装好、把 `paths.applio_root` 指对即可。
+
+### fairseq 装不上（Windows 常见）
+
+Applio 的特征提取依赖 `fairseq`。Windows + Python 3.10 上没有官方 wheel，三种解法：
+
+1. **用 Applio 官方安装脚本**（`install.bat`），它自带依赖处理；
+2. **装 VS Build Tools 后源码编译**：`pip install fairseq==0.12.2 --no-build-isolation`；
+3. **从已有环境复制**：把另一台能跑 Applio 的机器的 `site-packages/fairseq` 整个目录复制到 Applio 的 `site-packages`（我们本机就是从 DDSP-SVC 环境复制的，实测可用）。
+
+验证：`<applio_python> -c "import fairseq; print(fairseq.__version__)"`。
+
+### 不装训练能不能用
+
+可以先只跑 **分离 + 素材筛选**（`cover_run to=select`）验证环境；但**出成品必须训练**（或复用已有声库缓存）。

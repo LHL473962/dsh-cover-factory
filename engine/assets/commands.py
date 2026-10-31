@@ -75,14 +75,27 @@ def applio_env(cfg, model_id, dataset_dir, logs_dir):
     env = _child_env()
     env["SUIS_MODEL"] = model_id
     env["SUIS_DATASET"] = dataset_dir
+    env["APPLIO_ROOT"] = _path(cfg, "applio_root")
     env["APPLIO_LOGS_DIR"] = logs_dir
     env["CF_INDEX_ALGO"] = str((cfg.get("train") or {}).get("index_algorithm", "Auto"))
     return env
 
 
-def applio_cmd(cfg, mode, epochs=None):
+def applio_driver(cfg):
+    """训练驱动：优先配置 paths.applio_driver，其次 Applio 根目录的 dsh_rvc2.py，最后仓库自带 vendor 副本。"""
+    explicit = _path(cfg, "applio_driver")
+    if explicit:
+        return explicit
     root = _path(cfg, "applio_root")
-    cmd = [_py(cfg, "applio_python"), os.path.join(root, "dsh_rvc2.py"), mode]
+    local = os.path.join(root, "dsh_rvc2.py")
+    if os.path.isfile(local):
+        return local
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(here, "vendor", "applio", "dsh_rvc2.py")
+
+
+def applio_cmd(cfg, mode, epochs=None):
+    cmd = [_py(cfg, "applio_python"), applio_driver(cfg), mode]
     if mode == "train":
         cmd.append(str(int(epochs)))
     return cmd
