@@ -302,6 +302,8 @@ doctor 的 `gpu_torch_match` 会带 `suggestedTorch`（按 capability 自动选�
     python engine/run.py setup --install-fairseq --yes                       # 旧版 RVC 换声要的 fairseq 0.12.2
     python engine/run.py setup --install-torch --yes                         # 按显卡选 cu 版本
 
+Applio 安装会先按显卡装 torch/torchaudio，再把 requirements 里的 torch 行过滤后 pip install -r（其余依赖保持上游版本）。
+
 | 依赖 | 能不能自动装 | 说明 |
 | --- | --- | --- |
 | Python 3.10+（引擎）/ 3.11+（Applio） | 手动 | python.org 安装；Applio 3.7.1 的 numpy 2.4.6 只支持 3.11+，所以 Applio 用 3.11 venv |

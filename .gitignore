@@ -4,6 +4,7 @@ __pycache__/
 *.pth
 *.pt
 *.wav
+!engine/assets/room_ir.wav
 *.mp3
 jobs/
 _deleted/
