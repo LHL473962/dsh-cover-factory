@@ -193,6 +193,12 @@ def run(job, cfg):
     mp3 = os.path.join(out_dir, base_name + ".mp3")
     report_path = os.path.join(out_dir, "report.md")
     qa = base.read_json(base.work(job, "qa", "report.json"), {}) or {}
+    # EXPORT_GATE：质检不合格时默认拒绝出片（config.export.allow_failed=true 可放行）
+    _allow_failed = bool(((cfg.get("export") or {}).get("allow_failed")))
+    if qa and qa.get("ok") is False and not _allow_failed:
+        _probs = "；".join([str(x) for x in (qa.get("problems") or [])][:4])
+        raise RuntimeError("EXPORT_BLOCKED_QA: 质检不合格，拒绝导出：" + _probs)
+
     dest_dir = _output_dir(job, cfg)
     dest_mp3 = os.path.join(dest_dir, base_name + ".mp3")
     dest_report = os.path.join(dest_dir, base_name + "-report.md")

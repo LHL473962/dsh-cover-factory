@@ -1,6 +1,6 @@
 {
   "name": "dsh-cover-factory",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "翻唱工厂：歌手 + 好球曲 + 目标曲，端到端产出成品 mp3 与质检报告（DSH 工具插件）",
   "type": "module",
   "main": "index.js",

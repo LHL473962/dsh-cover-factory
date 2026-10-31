@@ -19,7 +19,7 @@ import { registerTools } from './lib/tools.js'
 import { redactPaths } from './lib/util.js'
 
 // 版本常量：tests/smoke.mjs 会核对它与 package.json 一致
-export const VERSION = '0.1.11'
+export const VERSION = '0.1.12'
 
 export const name = 'cover-factory'
 export const inject = ['tools', 'webServer']

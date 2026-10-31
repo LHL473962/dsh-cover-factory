@@ -35,3 +35,15 @@ python engine/tools/manual_mix.py \
 4. 归一化到 -14 LUFS、限幅 -2dB
 5. 输出前校验：比例偏差 ≤0.5 dB、峰值 ≤-1 dBFS
 6. 打印 md5
+
+
+## 播放器报 Unsupported channel layout（已发生 2 次）
+
+**原因**：导出 mono mp3，部分播放器不支持单声道布局。
+**修复**：所有交付音频强制立体声：
+
+```
+ffmpeg -i in.wav -ac 2 -ar 44100 -codec:a libmp3lame -b:a 320k out.mp3
+```
+
+**闸**：导出脚本/手工命令必须带 `-ac 2`；交付前用 ffprobe 确认 `channels=2`。
