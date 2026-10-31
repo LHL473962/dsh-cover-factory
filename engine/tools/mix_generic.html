@@ -1,0 +1,170 @@
+<!doctype html><meta charset="utf-8"><title>通用混音台</title>
+<style>
+body{background:#0e1220;color:#e8ecf6;font:14px "Microsoft YaHei";padding:16px;max-width:1120px}
+h1{font-size:20px;margin:0 0 4px}.sub{color:#8a96b4;margin-bottom:10px}
+.card{background:#161c2e;border:1px solid #26304a;border-radius:12px;padding:12px;margin-bottom:10px}
+button{background:#3b6cff;color:#fff;border:0;border-radius:8px;padding:7px 12px;margin:5px 5px 0 0;cursor:pointer}
+button.ghost{background:#252f47}button.on{background:#22c55e}
+input[type=range]{width:100%}label{color:#b8c4dc}
+#bar{height:14px;background:#0b1020;border:1px solid #26304a;border-radius:7px;margin:8px 0 4px;position:relative;overflow:hidden;cursor:pointer}
+#fill{height:100%;width:0;background:#3b6cff}
+.track{border-top:1px solid #223050;padding:8px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:6px;margin-top:6px}
+.cell label{font-size:12px;display:block}.val{color:#6ea8ff;font-weight:700;font-size:12px}
+#st{color:#9fb0d0;font-size:12px;white-space:pre-wrap;margin-top:6px}
+#meter{height:10px;background:#0b1020;border:1px solid #26304a;border-radius:5px;overflow:hidden;margin-top:8px}
+#mfill{height:100%;width:0;background:linear-gradient(90deg,#22c55e,#eab308,#ef4444)}
+</style>
+<h1>通用混音台</h1><div class="sub">导入任意音轨；每轨 8 段参数 + 饱和；总线压缩/限制/并联压缩；带电平表。同一时间轴，采样级同步。</div>
+
+<div class="card">
+ <label>选择音频文件（可多选）：<input type="file" id="files" multiple accept="audio/*"></label>
+ <button onclick="loadFiles()">载入</button>
+ <button class="ghost" onclick="clearAll()">清空</button>
+ <span id="msg" style="color:#9fb0d0"></span>
+</div>
+
+<div class="card">
+ <button onclick="toggle()" id="playBtn">▶ 播放</button>
+ <button class="ghost" id="loopBtn" onclick="loopOn=!loopOn;this.className=loopOn?'on':'ghost'">循环</button>
+ <span id="time" style="color:#8a96b4;margin-left:8px">0:00 / 0:00</span>
+ <div id="bar" onclick="seek(event)"><div id="fill"></div></div>
+ <div id="meter"><div id="mfill"></div></div>
+ <div class="grid">
+   <div class="cell"><label>总输出 <span class="val" id="mv">0.0 dB</span></label><input id="master" type="range" min="-30" max="6" step="0.5" value="0"></div>
+   <div class="cell"><label>压缩比 <span class="val" id="crv">1.3</span></label><input id="compRatio" type="range" min="1" max="4" step="0.1" value="1.3"></div>
+   <div class="cell"><label>压缩阈值 <span class="val" id="ctv">-15</span></label><input id="compTh" type="range" min="-30" max="0" step="1" value="-15"></div>
+   <div class="cell"><label>并联压缩 <span class="val" id="pcv">0.00</span></label><input id="par" type="range" min="0" max="1" step="0.02" value="0"></div>
+   <div class="cell"><label>限制阈值 <span class="val" id="ltv">-2</span></label><input id="limTh" type="range" min="-6" max="0" step="0.5" value="-2"></div>
+ </div>
+ <div id="tracks"></div>
+ <div id="st">未载入</div>
+</div>
+<script>
+let ctx=null,tracks=[],playing=false,startAt=0,offset=0,loopOn=false,masterGain=null,active=[],comp=null,lim=null,conv=null,parBus=null,parComp=null,analyser=null,parSend=null;
+const el=id=>document.getElementById(id);
+const tfmt=t=>{t=Math.max(0,t||0);return Math.floor(t/60)+':'+('0'+Math.floor(t%60)).slice(-2)};
+function st(t){el('st').textContent=t;}
+function makeIR(sec=1.6,decay=2.6){const n=Math.floor(ctx.sampleRate*sec),b=ctx.createBuffer(2,n,ctx.sampleRate);
+ for(let c=0;c<2;c++){const d=b.getChannelData(c);for(let i=0;i<n;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/n,decay);}return b;}
+function makeSat(amount){ // WaveShaper
+ const n=1024,curve=new Float32Array(n);
+ const k=1+amount*4;
+ for(let i=0;i<n;i++){const x=i*2/n-1;curve[i]=amount<=0.001?x:Math.tanh(x*k)/Math.tanh(k);}
+ const ws=ctx.createWaveShaper();ws.curve=curve;ws.oversample='2x';return ws;}
+function initCtx(){
+ if(ctx)return;
+ ctx=new (window.AudioContext||window.webkitAudioContext)();
+ comp=ctx.createDynamicsCompressor();comp.threshold.value=-15;comp.ratio.value=1.3;comp.attack.value=.02;comp.release.value=.25;
+ lim=ctx.createDynamicsCompressor();lim.threshold.value=-2;lim.ratio.value=20;lim.attack.value=.003;lim.release.value=.05;
+ masterGain=ctx.createGain();
+ conv=ctx.createConvolver();conv.buffer=makeIR();
+ // 并联压缩支路
+ parComp=ctx.createDynamicsCompressor();parComp.threshold.value=-30;parComp.ratio.value=6;parComp.attack.value=.005;parComp.release.value=.15;
+ parBus=ctx.createGain();parBus.gain.value=0;
+ parComp.connect(parBus).connect(comp);
+ comp.connect(lim).connect(masterGain);
+ analyser=ctx.createAnalyser();analyser.fftSize=1024;
+ masterGain.connect(analyser);analyser.connect(ctx.destination);
+}
+function dur(){let d=0;for(const t of tracks)d=Math.max(d,t.buffer.duration);return d;}
+function renderTracks(){
+ const box=el('tracks');box.innerHTML='';
+ tracks.forEach((t,i)=>{
+  const d=document.createElement('div');d.className='track';
+  d.innerHTML='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="min-width:170px;color:#cfe0ff">'+t.name+
+   '</span><span style="color:#8a96b4;font-size:12px">'+tfmt(t.buffer.duration)+'</span>'+
+   '<button class="'+(t.mute?'on':'ghost')+'" data-i="'+i+'" data-k="m">静音</button></div>'+
+   '<div class="grid">'+
+   cell(i,'g','增益',-40,6,0.5,t.gainDb,' dB')+
+   cell(i,'p','声像',-1,1,0.05,t.pan,'')+
+   cell(i,'l','低架120',-12,12,0.5,t.low,' dB')+
+   cell(i,'m2','800Hz',-12,12,0.5,t.mid,' dB')+
+   cell(i,'pre','存在3k',-6,12,0.5,t.pres,' dB')+
+   cell(i,'air','空气9k',-6,12,0.5,t.air,' dB')+
+   cell(i,'sat','饱和',0,1,0.02,t.sat,'')+
+   cell(i,'r','混响',0,1,0.02,t.rev,'')+
+   '</div>';
+  box.appendChild(d);
+ });
+ box.querySelectorAll('button[data-k=m]').forEach(b=>b.onclick=()=>{const i=+b.dataset.i;tracks[i].mute=!tracks[i].mute;renderTracks();apply();});
+ box.querySelectorAll('input[type=range]').forEach(s=>s.oninput=()=>{
+  const i=+s.dataset.i,k=s.dataset.k,v=parseFloat(s.value),t=tracks[i];
+  if(k==='g')t.gainDb=v; if(k==='p')t.pan=v; if(k==='l')t.low=v; if(k==='m2')t.mid=v;
+  if(k==='pre')t.pres=v; if(k==='air')t.air=v; if(k==='sat')t.sat=v; if(k==='r')t.rev=v;
+  el(k+i).textContent=(k==='sat'||k==='r'||k==='p')?v.toFixed(2):v.toFixed(1)+' dB';
+  apply();
+ });
+}
+function cell(i,k,label,min,max,step,val,unit){
+ return '<div class="cell"><label>'+label+' <span class="val" id="'+k+i+'">'+(k==='sat'||k==='r'||k==='p'?Number(val).toFixed(2):Number(val).toFixed(1)+unit)+
+  '</span></label><input type="range" data-i="'+i+'" data-k="'+k+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+val+'"></div>';
+}
+function apply(){
+ if(!ctx)return;
+ const g=Math.pow(10,+el('master').value/20);el('mv').textContent=(+el('master').value).toFixed(1)+' dB';
+ masterGain.gain.setTargetAtTime(g,ctx.currentTime,.02);
+ comp.ratio.setTargetAtTime(+el('compRatio').value,ctx.currentTime,.05);
+ comp.threshold.setTargetAtTime(+el('compTh').value,ctx.currentTime,.05);
+ lim.threshold.setTargetAtTime(+el('limTh').value,ctx.currentTime,.05);
+ parBus.gain.setTargetAtTime(+el('par').value,ctx.currentTime,.05);
+ el('crv').textContent=(+el('compRatio').value).toFixed(1);
+ el('ctv').textContent=(+el('compTh').value);
+ el('pcv').textContent=(+el('par').value).toFixed(2);
+ el('ltv').textContent=(+el('limTh').value);
+ active.forEach(a=>{const t=tracks[a.i];
+  a.g.gain.setTargetAtTime(t.mute?0:Math.pow(10,t.gainDb/20),ctx.currentTime,.02);
+  a.pan.pan.setTargetAtTime(t.pan,ctx.currentTime,.02);
+  a.low.gain.setTargetAtTime(t.low,ctx.currentTime,.02);
+  a.mid.gain.setTargetAtTime(t.mid,ctx.currentTime,.02);
+  a.pres.gain.setTargetAtTime(t.pres,ctx.currentTime,.02);
+  a.air.gain.setTargetAtTime(t.air,ctx.currentTime,.02);
+  a.rev.gain.setTargetAtTime(t.mute?0:t.rev,ctx.currentTime,.02);
+ });
+}
+async function loadFiles(){
+ const fs=[...el('files').files];if(!fs.length){st('先选文件');return;}
+ initCtx();if(ctx.state==='suspended')await ctx.resume();
+ for(const f of fs){
+  try{const ab=await f.arrayBuffer();const buf=await ctx.decodeAudioData(ab);
+   tracks.push({name:f.name,buffer:buf,gainDb:0,pan:0,low:0,mid:0,pres:0,air:0,sat:0,rev:0,mute:false});
+   st('已载入 '+tracks.length+' 轨');}
+  catch(e){st('解码失败 '+f.name+': '+e.message);}
+ }
+ renderTracks();el('time').textContent='0:00 / '+tfmt(dur());
+}
+function clearAll(){stop();tracks=[];renderTracks();st('已清空');}
+function stop(){active.forEach(a=>{try{a.src.stop()}catch(e){}});active=[];playing=false;el('playBtn').textContent='▶ 播放';}
+function playFrom(off){
+ if(!tracks.length){st('未载入');return;}
+ initCtx();if(ctx.state==='suspended')ctx.resume();
+ stop();apply();
+ const t0=ctx.currentTime+.06;offset=off;startAt=t0;
+ tracks.forEach((t,i)=>{
+  const src=ctx.createBufferSource();src.buffer=t.buffer;src.loop=loopOn;
+  const low=ctx.createBiquadFilter();low.type='lowshelf';low.frequency.value=120;low.gain.value=t.low;
+  const mid=ctx.createBiquadFilter();mid.type='peaking';mid.frequency.value=800;mid.Q.value=1.0;mid.gain.value=t.mid;
+  const pres=ctx.createBiquadFilter();pres.type='peaking';pres.frequency.value=3000;pres.Q.value=1.1;pres.gain.value=t.pres;
+  const air=ctx.createBiquadFilter();air.type='peaking';air.frequency.value=9000;air.Q.value=1.0;air.gain.value=t.air;
+  const sat=makeSat(t.sat);
+  const g=ctx.createGain();g.gain.value=t.mute?0:Math.pow(10,t.gainDb/20);
+  const pan=ctx.createStereoPanner?ctx.createStereoPanner():null;if(pan)pan.pan.value=t.pan;
+  const rev=ctx.createGain();rev.gain.value=t.mute?0:t.rev;
+  src.connect(low).connect(mid).connect(pres).connect(air).connect(sat).connect(g);
+  if(pan){g.connect(pan);pan.connect(comp);pan.connect(parComp);}else{g.connect(comp);g.connect(parComp);}
+  g.connect(rev).connect(conv).connect(comp);
+  src.start(t0,off);
+  active.push({src,g,pan,low,mid,pres,air,rev,i});
+ });
+ playing=true;el('playBtn').textContent='⏸ 暂停';requestAnimationFrame(raf);meter();
+}
+function toggle(){if(playing)stop();else playFrom(offset);}
+function raf(){if(!playing)return;let t=offset+(ctx.currentTime-startAt);const d=dur();if(loopOn)t=t%d;
+ el('fill').style.width=(t/Math.max(d,.01)*100)+'%';el('time').textContent=tfmt(t)+' / '+tfmt(d);requestAnimationFrame(raf);}
+function meter(){if(!playing)return;const a=new Float32Array(analyser.fftSize);analyser.getFloatTimeDomainData(a);
+ let s=0;for(const v of a)s+=v*v;const db=10*Math.log10(Math.max(s/a.length,1e-9));
+ el('mfill').style.width=Math.max(0,Math.min(100,(db+60)/60*100))+'%';requestAnimationFrame(meter);}
+function seek(e){const r=el('bar').getBoundingClientRect();const p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));const off=p*dur();
+ if(playing)playFrom(off);else{offset=off;el('fill').style.width=(p*100)+'%';el('time').textContent=tfmt(off)+' / '+tfmt(dur());}}
+el('master').oninput=apply;['compRatio','compTh','limTh','par'].forEach(id=>el(id).oninput=apply);
+</script>

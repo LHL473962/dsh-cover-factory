@@ -133,7 +133,8 @@
       "tqdm==4.67.1",
       "matplotlib==3.10.6",
       "torchcrepe==0.0.24",
-      "av==17.1.0"
+      "av==17.1.0",
+      "python-dotenv"
     ],
     "timeout_sec": 1800
   },

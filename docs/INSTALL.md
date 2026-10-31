@@ -358,3 +358,16 @@ engine/vendor/applio/dsh_rvc2.py
 | 换声（旧版 RVC） | **3.10** | 需要 fairseq → 用 `setup --install-fairseq` |
 
 旧版 RVC 用 3.10 建独立 venv 即可；Applio 用 3.11/3.12。
+
+
+## fairseq 依赖的 omegaconf 与 pip 版本
+
+`fairseq 0.12.2` 需要 `omegaconf 2.0.x`，而 pip ≥26 会拒绝它的旧元数据（`PyYAML (>=5.1.*)`）。
+若 `pip install omegaconf==2.0.6` 失败：
+
+```
+<python> -m pip install "pip==24.0"
+<python> -m pip install "omegaconf==2.0.6" "hydra-core==1.0.7"
+```
+
+另外旧版 RVC 的 `infer_cli.py` 需要 `python-dotenv`（已加入 `--install-rvc-deps`）。
