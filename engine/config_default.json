@@ -209,6 +209,9 @@
   "mix": {
     "target_lufs": -14,
     "headroom_db": 1,
+    "ratio_tol_db": 0.5,
+    "vocal_gain_db": 0,
+    "inst_gain_db": 0,
     "limiter_db": -1.5,
     "limiter_attack_ms": 0.1,
     "limiter_release_ms": 50,

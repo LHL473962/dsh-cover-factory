@@ -86,6 +86,7 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 
 - **Applio 3.7.1 需要 Python 3.11+**：用 3.10 显式跑安装器会在 **0 秒**直接 failed（不 clone、不建 venv、不跑 requirements），hint 给 https://www.python.org/downloads/release/python-3119/ 。本机 3.11 实测成功：临时目录、base=D:/Apps/applio-env 的 3.11.9，**676 秒 / 8.1G**，torch 2.11.0+cu128、transformers 5.13.1、faiss 1.14.3、`import core` 全过；体积比预估大，预留 10G。
 - **github.com:443 间歇不可达**：Applio 安装会自动回退 `codeload.github.com` 的固定 tag zip；两者都不通时只能配代理/镜像重试。
+- **人声/伴奏比例是硬约束**：实测踩坑——两版人声都 −6dB，源比例 −4.96 被改成 −10.96，听感“人声变小、伴奏变吵”。现在 mix 会算 `ratio_src` / `ratio_mix`，偏差 >0.5dB 直接 failed，并在 report.json 写 `vocalBackingRatio`；qa 同样标红。不要给单版人声私自加/减 dB。
 
 ### 只装/重装 torch（先看命令，再加 --yes 真装）
 

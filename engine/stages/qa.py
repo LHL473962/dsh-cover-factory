@@ -126,6 +126,11 @@ def run(job, cfg):
                 if base.file_ok(fp):
                     dataset_sig.append([name, os.path.getsize(fp), int(os.path.getmtime(fp) * 1e9)])
     leak = _eval_leak(job, tgt, target_vocals, ds_dir)
+    mix_report_path = base.work(job, "mix", "report.json")
+    mix_rep = base.read_json(mix_report_path, {}) or {}
+    ratio = mix_rep.get("vocalBackingRatio") or (
+        ((job.get("stages") or {}).get("mix") or {}).get("metrics") or {}).get("vocalBackingRatio")
+    ratio_tol = 0.5
 
     # 期望声部：options.voice > select 的 expectedVoice > dataset 中位；音域用宽区间
     voice_opt = str(opts.get("voice") or "auto").strip().lower()
@@ -155,6 +160,8 @@ def run(job, cfg):
         "datasetSig": dataset_sig,
     }
     inputs = [mix]
+    if base.file_ok(mix_report_path):
+        inputs.append(mix_report_path)
     if tgt and base.file_ok(tgt.get("raw") or ""):
         inputs.append(tgt["raw"])
     if base.file_ok(target_vocals):
@@ -164,9 +171,15 @@ def run(job, cfg):
 
     if base.recon(job, STAGE, inputs, params, [report_path]):
         rep = base.read_json(report_path, {}) or {}
+        changed = False
         if "evalLeak" not in rep:
             rep["evalLeak"] = leak
             rep["warnings"] = (rep.get("warnings") or []) + ([leak["warning"]] if leak.get("hit") else [])
+            changed = True
+        if "vocalBackingRatio" not in rep and ratio:
+            rep["vocalBackingRatio"] = ratio
+            changed = True
+        if changed:
             base.write_json(report_path, rep)
             if base.file_ok(md_path):
                 _write_md(md_path, job, rep)
@@ -251,6 +264,19 @@ def run(job, cfg):
         problems.append("音域覆盖未测：缺少目标人声 stem 或期望音域配置")
         suggestions.append("确认目标曲人声 stem 存在、qa.voice_ranges 配置有效")
 
+    if ratio and ratio.get("delta") is not None:
+        try:
+            delta = float(ratio.get("delta"))
+            checks["vocalBackingRatio"] = abs(delta) <= ratio_tol
+            if not checks["vocalBackingRatio"]:
+                problems.append("人声/伴奏比例偏离原曲 %.2f dB（ratio_src=%.2f，ratio_mix=%.2f，容差 %.2f）"
+                                % (delta, float(ratio.get("src") or 0), float(ratio.get("mix") or 0), ratio_tol))
+                suggestions.append("检查 mix.vocal_gain_db / inst_gain_db，比例是硬约束；改回后重跑 mix/qa")
+        except (TypeError, ValueError):
+            checks["vocalBackingRatio"] = None
+    else:
+        checks["vocalBackingRatio"] = None
+
     ok = all(v is not False for v in checks.values())
     warnings = []
     if leak.get("hit"):
@@ -272,6 +298,7 @@ def run(job, cfg):
         "pitchRange": pitch_range,
         "targetMedianF0": target_f0_summary.get("median"),
         "evalLeakHit": bool(leak.get("hit")),
+        "vocalBackingRatio": ratio or {"src": None, "mix": None, "delta": None},
         "warnings": warnings,
         "problems": problems,
         "suggestions": suggestions,
@@ -285,6 +312,7 @@ def run(job, cfg):
         "checks": checks,
         "metrics": metrics,
         "evalLeak": leak,
+        "vocalBackingRatio": ratio or {"src": None, "mix": None, "delta": None},
         "warnings": warnings,
         "thresholds": {
             "loudnessTarget": target_lufs, "loudnessTol": tol, "peakMaxDb": peak_max,
@@ -325,7 +353,7 @@ def _write_md(path, job, report):
     ]
     names = {
         "stereo": "立体声", "duration": "时长", "peak": "峰值", "loudness": "响度",
-        "gapRate": "断音率", "rangeCoverage": "音域覆盖",
+        "gapRate": "断音率", "rangeCoverage": "音域覆盖", "vocalBackingRatio": "人声/伴奏比例",
     }
     values = {
         "stereo": str(m.get("durationSec") or ""),
@@ -334,8 +362,13 @@ def _write_md(path, job, report):
         "loudness": "%s LUFS" % m.get("lufs"),
         "gapRate": "%s 次/分" % m.get("gapPerMin"),
         "rangeCoverage": "%s" % (("%.0f%%" % (float(m["rangeCoverage"]) * 100)) if m.get("rangeCoverage") is not None else "未测"),
+        "vocalBackingRatio": "未测",
     }
-    for k in ("stereo", "duration", "peak", "loudness", "gapRate", "rangeCoverage"):
+    r = m.get("vocalBackingRatio") or {}
+    if r.get("src") is not None and r.get("mix") is not None:
+        values["vocalBackingRatio"] = "src %+.2f / mix %+.2f dB（Δ %+.2f）" % (
+            float(r.get("src")), float(r.get("mix")), float(r.get("delta") or 0))
+    for k in ("stereo", "duration", "peak", "loudness", "gapRate", "rangeCoverage", "vocalBackingRatio"):
         v = checks.get(k)
         verdict = "通过" if v is True else ("不合格" if v is False else "未测")
         lines.append("| %s | %s | %s |" % (names.get(k, k), values.get(k, ""), verdict))

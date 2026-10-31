@@ -7,10 +7,19 @@ cwd 必须是 rvc 根目录；模型目录通过 weight_root 环境变量喂给 
 
 import os
 
+import numpy as np
+
 from assets import audio, commands
 from stages import base
 
 STAGE = "convert"
+
+
+def _rms_db(ff, path):
+    x = audio.decode(ff, path, 44100, 1)
+    if x is None or len(x) == 0:
+        return None
+    return 20.0 * float(np.log10(float(np.sqrt(np.mean(np.asarray(x, dtype=np.float64) ** 2))) + 1e-12))
 
 
 def run(job, cfg):
@@ -53,7 +62,9 @@ def run(job, cfg):
         "model": model_pth,
         "modelMtime": os.path.getmtime(model_pth),
     }
-    inputs = [vocals, model_pth] + ([model_idx] if base.file_ok(model_idx) else [])
+    target_vocals = base.work(job, "stems", stem, "vocals.wav")
+    inputs = [vocals, model_pth] + ([target_vocals] if base.file_ok(target_vocals) else []) + (
+        [model_idx] if base.file_ok(model_idx) else [])
 
     if base.recon(job, STAGE, inputs, params, [out]):
         base.log("convert: 产物已存在且输入未变，跳过")
@@ -93,11 +104,35 @@ def run(job, cfg):
     if not base.file_ok(out):
         return base.result("failed", [], {"pitch": pitch}, error="换声命令成功但没有产物: " + out)
 
-    info = audio.probe(audio.find_ffmpeg(paths), out)
+    ff = audio.find_ffmpeg(paths)
+    align_db = None
+    if base.file_ok(target_vocals):
+        try:
+            r_t = _rms_db(ff, target_vocals)
+            r_c = _rms_db(ff, out)
+            if r_t is not None and r_c is not None:
+                align_db = float(r_t) - float(r_c)
+                if abs(align_db) > 0.05:
+                    tmp = out + ".align.wav"
+                    res_a = base.run_cmd(
+                        [ff, "-y", "-hide_banner", "-loglevel", "error", "-i", out,
+                         "-af", "volume=%.3fdB" % align_db, "-c:a", "pcm_s16le", tmp],
+                        timeout=float(ccfg.get("timeout_sec", 3600)),
+                    )
+                    if res_a["returncode"] == 0 and base.file_ok(tmp):
+                        os.replace(tmp, out)
+                        base.log("convert: 人声电平对齐 %+.2f dB（与目标 vocals 等 RMS）" % align_db)
+                    else:
+                        base.log("convert: 警告：人声电平对齐失败（%s）" % res_a.get("tail", "")[-200:])
+        except Exception as exc:  # noqa: BLE001
+            base.log("convert: 警告：人声电平对齐异常：%s" % exc)
+
+    info = audio.probe(ff, out)
     metrics = {
         "pitch": pitch,
         "durationSec": info.get("duration_sec"),
         "indexRate": ccfg.get("index_rate", 0.75),
+        "vocalAlignDb": round(float(align_db), 3) if align_db is not None else None,
         "elapsed_sec": res["elapsed_sec"],
     }
     base.log("convert: 完成（%.1fs）" % (info.get("duration_sec") or 0))

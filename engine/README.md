@@ -115,6 +115,25 @@ job.json 的 `separate_model` 记录实际模型；换模型会因 separate 参�
 结果写 `work/sep/stem_check.json`，job.json 记 `stem_check`（report/verdict/warnings/songs），成品 report.md 显示；
 阈值在 `separate.stem_check` 可调。
 
+### 人声/伴奏比例是硬约束
+
+mix 在渲染前强制自检，不再靠文档提醒：
+
+    ratio_src = rms(目标曲 vocals stem) - rms(目标曲 instrumental stem)
+    ratio_mix = rms(convert vocal) + vocal_gain_db - (rms(instrumental) + inst_gain_db)
+
+`|ratio_mix - ratio_src| > mix.ratio_tol_db`（默认 0.5dB）→ **mix failed**，message 写清“人声/伴奏比例偏离原曲 X dB，疑似私自加增益”，并给 src/mix。
+convert 完成后会先把换声人声 RMS 对齐目标 vocals（记录 `vocalAlignDb`），消除换声模型自带的电平差；之后任何额外的人声增益都会让 ratio_mix 偏离。
+结果写 `work/mix/report.json` 的 `vocalBackingRatio {src,mix,delta}`，qa/report.json 同步并标红。
+**不要给单版人声私自加减 dB**；需要整体电平变化时同时改 `vocal_gain_db` / `inst_gain_db`，比例不变，或者重跑混音链。
+
+匿名 A/B（两个声库、同伴奏、同链、每版人声按 ratio_src 对齐 ±0.2dB、同响度）：
+
+    python engine/tools/ab_compare.py --a-pth <a.pth> --a-index <a.index> \
+        --b-pth <b.pth> --b-index <b.index> --vocals <target_vocals.wav> \
+        --instrumental <target_instrumental.wav> --out <dir> [--job <job.json>]
+
+A/B 匿名输出，bank 映射只写 `mapping.json` 不打印；先自检比例，不通过拒绝输出。
 ### 混音极性
 
 `alimiter` 的 attack 是 lookahead：默认 5ms 会让输出整体延迟约 219 samples，导致“成品 vs 伴奏”0 延迟相关假性为负。
@@ -375,6 +394,7 @@ torch/torchaudio 不装（由 `--install-torch` / Applio venv 负责）；fairse
 
 - **两个环境别混用**：RVC/换声固定 Python 3.10（本机 rvc-env）；Applio/训练固定 Python 3.11+（本机 D:/Apps/applio-env = 3.11.9）。安装器会自动选 3.11+；若只有 3.10 会在 clone 前直接失败并提示下载 https://www.python.org/downloads/release/python-3119/ 。
 - **github.com:443 间歇被墙**：Applio 的 git clone 失败时会自动回退到 codeload.github.com 的固定 tag zip；如果两者都不通，只能配代理/镜像后重试。
+- **比例踩坑**：曾把两版人声都 −6dB，源比例 −4.96 变成 −10.96（人声变小、伴奏变吵）。现在 convert 自动对齐人声 RMS，mix 强制检查 |ratio_mix-ratio_src|<=0.5dB，超出直接 failed，qa 标红。
 - **实测 3.10（显式 --python rvc-env）**：安装器在 **0 秒 / 0 文件**时直接 failed，不 clone、不建 venv、不跑 requirements；step 带 hint 和下载 https://www.python.org/downloads/release/python-3119/ 。
 - **实测 3.11（临时 D:/VoiceData/exp/applio_test311，base=D:/Apps/applio-env 的 3.11.9）**：成功。git clone 被墙 → codeload 回退；torch 2.11.0+cu128 约 5 分钟；requirements 34 条约 5 分钟；`import core` / transformers 5.13.1 / faiss 1.14.3 全过。**总耗时 676 秒，目录 8.1G**（比预估 3–5G 大，建议预留 10G）。
 

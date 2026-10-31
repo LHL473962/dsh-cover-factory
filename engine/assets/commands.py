@@ -157,8 +157,11 @@ def mix_filter(cfg, ir_path=None, shift=0):
     """
     m = cfg.get("mix") or {}
     comp = m.get("compressor") or {}
-    vocal = (
-        "[0:a]aresample=44100,highpass=f=%s,equalizer=f=%s:width_type=q:width=1.4:g=%s"
+    vg = float(m.get("vocal_gain_db", 0) or 0)
+    ig = float(m.get("inst_gain_db", 0) or 0)
+    vocal = "[0:a]" + (("volume=%sdB," % round(vg, 3)) if abs(vg) > 1e-9 else "")
+    vocal += (
+        "aresample=44100,highpass=f=%s,equalizer=f=%s:width_type=q:width=1.4:g=%s"
         % (m.get("highpass", 45), m.get("warm_freq", 260), m.get("warm_gain_db", -1.2))
     )
     if m.get("presence", True):
@@ -171,7 +174,7 @@ def mix_filter(cfg, ir_path=None, shift=0):
         comp.get("attack_ms", 10), comp.get("release_ms", 120),
     )
 
-    inst = "[1:a]aresample=44100"
+    inst = "[1:a]" + (("volume=%sdB," % round(ig, 3)) if abs(ig) > 1e-9 else "") + "aresample=44100"
     shift = int(shift or 0)
     if shift:
         ratio = 2.0 ** (shift / 12.0)

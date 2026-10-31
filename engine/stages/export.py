@@ -127,6 +127,12 @@ def _report_md(job, cfg, qa, mix_metrics, export_metrics):
             (lambda s: s[len("EVAL_LEAK："):] if s.startswith("EVAL_LEAK：") else s)(
                 str((qa.get("evalLeak") or {}).get("warning") or "目标曲命中训练集（见 qa/report.json）"))
             if (qa.get("evalLeak") or {}).get("hit") else "未命中训练集"),
+        "- 人声/伴奏比例：" + (
+            "src %+.2f / mix %+.2f dB（Δ %+.2f）" % (
+                float((qa.get("vocalBackingRatio") or {}).get("src") or 0),
+                float((qa.get("vocalBackingRatio") or {}).get("mix") or 0),
+                float((qa.get("vocalBackingRatio") or {}).get("delta") or 0))
+            if (qa.get("vocalBackingRatio") or {}).get("src") is not None else "未测"),
         "- 断音率：%s 次/分（合格线 < 12）" % (qmetrics.get("gapPerMin") if qmetrics.get("gapPerMin") is not None else "未测"),
         "- 音域覆盖：%s（合格线 >= 70%%）" % _pct(qmetrics.get("rangeCoverage")),
         "",

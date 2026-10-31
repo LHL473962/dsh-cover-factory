@@ -7,6 +7,7 @@ IR 1.2s 湿 30% 返回加宽 1.8x；伴奏 0dB + 2.8k 让位 -1 + 加宽 1.15x�
 总线 1.3:1 glue -> 静态等响 (-14 LUFS) -> limiter -1.5dB。
 """
 
+import math
 import os
 
 import numpy as np
@@ -15,6 +16,13 @@ from assets import audio, commands
 from stages import base
 
 STAGE = "mix"
+
+
+def _rms_db(ff, path):
+    x = _decode_mono(ff, path)
+    if x is None or len(x) == 0:
+        return None
+    return 20.0 * math.log10(float(np.sqrt(np.mean(np.asarray(x, dtype=np.float64) ** 2))) + 1e-12)
 
 
 def _decode_mono(ff, path, sr=44100):
@@ -73,7 +81,10 @@ def run(job, cfg):
 
     stem = os.path.splitext(os.path.basename(tgt["raw"]))[0]
     inst = base.work(job, "stems", stem, "instrumental.wav")
+    target_vocals = base.work(job, "stems", stem, "vocals.wav")
     vocal = base.work(job, "convert", "vocal.wav")
+    if not base.file_ok(target_vocals):
+        return base.result("failed", [], {}, error="目标曲人声 stem 缺失，无法做人声/伴奏比例自检：先跑 separate（" + target_vocals + "）")
     if not base.file_ok(vocal):
         return base.result(
             "skipped", [], {"reason": "no-vocal"},
@@ -97,16 +108,52 @@ def run(job, cfg):
 
     out = base.work(job, "mix", "out.wav")
     premix = base.work(job, "mix", "_tmp", "premix.wav")
+    report_path = base.work(job, "mix", "report.json")
     params = {"shift": shift, "mix": mcfg, "ir": os.path.basename(ir) if ir_used else None}
-    inputs = [vocal, inst, ir] if ir_used else [vocal, inst]
+    inputs = [vocal, inst, target_vocals] + ([ir] if ir_used else [])
+
+    ff = audio.find_ffmpeg(cfg.get("paths"))
+    timeout = float(mcfg.get("timeout_sec", 1800))
+    vocal_gain = float(mcfg.get("vocal_gain_db", 0) or 0)
+    inst_gain = float(mcfg.get("inst_gain_db", 0) or 0)
+    tol = float(mcfg.get("ratio_tol_db", 0.5))
+    try:
+        src_v = _rms_db(ff, target_vocals)
+        src_i = _rms_db(ff, inst)
+        mix_v = _rms_db(ff, vocal)
+        mix_i = src_i
+    except Exception as exc:  # noqa: BLE001
+        return base.result("failed", [], {}, error="人声/伴奏比例自检失败（读不到音频）：%s" % exc)
+    if None in (src_v, src_i, mix_v, mix_i):
+        return base.result("failed", [], {}, error="人声/伴奏比例自检失败（RMS 为空）")
+    ratio_src = float(src_v) - float(src_i)
+    ratio_mix = (float(mix_v) + vocal_gain) - (float(mix_i) + inst_gain)
+    delta = ratio_mix - ratio_src
+    ratio_info = {
+        "src": round(ratio_src, 3),
+        "mix": round(ratio_mix, 3),
+        "delta": round(delta, 3),
+        "tolDb": tol,
+        "vocalGainDb": round(vocal_gain, 3),
+        "instGainDb": round(inst_gain, 3),
+        "sourceVocals": base.rel(job, target_vocals),
+        "convertedVocals": base.rel(job, vocal),
+        "instrumental": base.rel(job, inst),
+    }
+    if abs(delta) > tol:
+        msg = ("人声/伴奏比例偏离原曲 %.2f dB，疑似私自加增益（ratio_src=%.2f dB，ratio_mix=%.2f dB，容差 %.2f dB；"
+               "人声轨：%s，伴奏：%s）" % (delta, ratio_src, ratio_mix, tol,
+                                          base.rel(job, vocal), base.rel(job, inst)))
+        base.log("mix: FAIL " + msg)
+        base.ensure_dir(os.path.dirname(report_path))
+        base.write_json(report_path, {"ok": False, "vocalBackingRatio": ratio_info, "error": msg})
+        return base.result("failed", [], {"vocalBackingRatio": ratio_info}, error=msg)
 
     if base.recon(job, STAGE, inputs, params, [out]):
         base.log("mix: 产物已存在且输入未变，跳过")
         return base.result("skipped", [base.rel(job, out)], dict(base.prev_metrics(job, STAGE)), reason="产物已存在且输入未变")
 
-    ff = audio.find_ffmpeg(cfg.get("paths"))
     base.ensure_dir(os.path.dirname(premix))
-    timeout = float(mcfg.get("timeout_sec", 1800))
 
     render_cmd, graph, used_ir = commands.mix_render_cmd(ff, cfg, vocal, inst, premix, ir_path=ir, shift=shift)
     base.log("mix: 渲染混音（shift=%s, IR=%s）" % (shift, used_ir))
@@ -222,7 +269,9 @@ def run(job, cfg):
         "polarityCorr0": polarity_corr0,
         "polarityCorr": polarity_corr,
         "polarityLag": polarity_lag,
+        "vocalBackingRatio": ratio_info,
         "elapsed_sec": round(res["elapsed_sec"] + master_elapsed, 1),
     }
+    base.write_json(report_path, {"ok": True, "vocalBackingRatio": ratio_info, "metrics": metrics})
     base.log("mix: 完成 LUFS=%s peak=%s finalPeak=%s dBFS" % (metrics["lufs"], metrics["peakDb"], metrics["finalPeak"]))
     return base.result("done", [base.rel(job, out)], metrics, input_hash=base.sig(job, inputs, params))
