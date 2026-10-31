@@ -306,3 +306,25 @@ engine/vendor/applio/dsh_rvc2.py
 写完跑一次 `cover_doctor` / `python engine/run.py doctor`，全绿再建任务。
 
 打包自检：`node tests/package.mjs`（检查关键文件、本机路径泄漏、文档引用）。
+
+## 首次使用检查清单（站在别人机器上）
+
+安装完、跑任务前，按顺序过一遍。任何一条不通过，先别建 job。
+
+1. **干净环境自检**：`node tests/firstrun.mjs`（复制一份仓库、删掉 config.local，验证 doctor 报错可操作、不崩溃、不泄漏作者路径）。
+2. **体检全绿**：`cover_doctor` 或 `python engine/run.py doctor`，ok=true。
+3. **路径都在自己机器上**：`engine/config.local.json` 里的 msst/applio/rvc 路径逐条确认存在。
+4. **Python 版本对**：RVC 环境 3.10；Applio 环境 ≥3.11（doctor 会报）。
+5. **fairseq**：`<rvc_python> -c "import fairseq"` 能过（只有换声需要）。
+6. **磁盘** ≥15G，**显存** ≥5G 空闲（否则 run 会停下来让你选）。
+7. **先跑 300 步**：steps: 300 全链路出片（约 3 分钟），确认训练/换声/混音都通，再上 9000。
+
+常见“别人跑不通”的原因，按概率排序：
+
+| 原因 | 症状 | 解法 |
+|---|---|---|
+| 路径写成了作者机器 | doctor 全红 | 填 config.local.json |
+| Python 版本不对 | Applio venv 建失败 / 版本门 | RVC 3.10、Applio 3.11+ |
+| 缺 fairseq | 换声阶段 ImportError | setup --install-fairseq --yes |
+| 显存不足 | run 退出码 2 / LOW_VRAM | 关其它 GPU 程序，或减步数 |
+| 网络不通 | 下载权重失败 | 开代理，或手动下模型 |
