@@ -137,11 +137,19 @@ def missing_deps(cfg):
             fp = os.path.join(root, rel)
             if not os.path.isfile(fp):
                 missing.append("预训练权重缺失（不联网，无法自动下载）: " + fp)
-    # contentvec 缺失时 Applio 会尝试联网下载；引擎不联网，提前拦下
+    # contentvec 缺失时 Applio 会尝试联网下载；引擎不联网，提前拦下；并且实际 torch.load 一次
     if root:
-        embed = os.path.join(root, "rvc", "models", "embedders", "contentvec")
-        if not os.path.isfile(os.path.join(embed, "pytorch_model.bin")):
-            missing.append("contentvec embedder 缺失（不联网，无法自动下载）: " + embed)
+        embed_file = os.path.join(root, "rvc", "models", "embedders", "contentvec", "pytorch_model.bin")
+        if not os.path.isfile(embed_file):
+            missing.append("contentvec embedder 缺失（不联网，无法自动下载）: " + embed_file
+                           + "；跑 setup --with-models --yes")
+        else:
+            try:
+                import torch
+                torch.load(embed_file, map_location="cpu", weights_only=False)
+            except Exception as exc:  # noqa: BLE001
+                missing.append("contentvec embedder 无法 torch.load：%s: %s（跑 setup --with-models --yes）"
+                               % (type(exc).__name__, str(exc)[:160]))
     return missing
 
 

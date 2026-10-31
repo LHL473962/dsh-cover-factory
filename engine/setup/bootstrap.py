@@ -436,6 +436,31 @@ def _download_weight(name, url, dest, expected_size, expected_sha, execute):
     return action(name, "failed", "下载失败：%s（可手动下载：%s -> %s）" % (last_error[:300], url, dest), dest, url)
 
 
+def _download_weight_multi(name, urls, dest, expected_size, expected_sha, execute):
+    """同一权重多 URL：官方优先，失败自动换镜像；已有/断点续传沿用 _download_weight。"""
+    urls = [u for u in urls if u]
+    if not dest:
+        return action(name, "failed", "未配置落点路径", "", "检查 paths.applio_root")
+    ok, detail = _valid_weight(dest, expected_size, expected_sha)
+    if ok:
+        return action(name, "skipped", "已存在（%s）：%s" % (detail, urls[0] if urls else ""), dest, urls[0] if urls else "")
+    if not urls:
+        return action(name, "failed", "没配置下载 URL", dest, "在 paths.model_sources 补 %s / %s_mirror" % (name, name))
+    if not execute:
+        return action(name, "skipped", "dry-run：加 --yes 下载 %s（%s）" % (
+            _human_size(expected_size), "；".join(urls)), dest, urls[0])
+    errors = []
+    for url in urls:
+        act = _download_weight(name, url, dest, expected_size, expected_sha, True)
+        if act.get("status") == "done":
+            if errors:
+                act["detail"] = act.get("detail", "") + "（前序 URL 失败后回退成功）"
+            return act
+        errors.append(str(act.get("detail") or "")[:220])
+    return action(name, "failed", "全部 URL 失败：" + "；".join(errors) + "（手动下载：" + " 或 ".join(urls) + " -> " + dest + "）",
+                  dest, urls[0])
+
+
 def install_models(cfg, execute):
     """MSST 仓库 + MelBand kim + hubert/rmvpe；已存在跳过、断点续传、失败不中断。"""
     paths = cfg.get("paths") or {}
@@ -473,6 +498,17 @@ def install_models(cfg, execute):
     for name, dest in targets:
         steps.append(_download_weight(name, sources.get(name) or "", dest,
                                      sizes.get(name), shas.get(name), execute))
+
+    # contentvec：Applio 训练用的 embedder，固定放 <applio_root>/rvc/models/embedders/contentvec/
+    applio_root = paths.get("applio_root") or ""
+    if not applio_root:
+        steps.append(action("contentvec", "failed", "paths.applio_root 为空，无法确定 contentvec 落点", "",
+                            "先配置 paths.applio_root（Applio 根目录），再跑 setup --with-models --yes"))
+    else:
+        cvec_dest = os.path.join(applio_root, "rvc", "models", "embedders", "contentvec", "pytorch_model.bin")
+        cvec_urls = [sources.get("contentvec") or "", sources.get("contentvec_mirror") or ""]
+        steps.append(_download_weight_multi("contentvec", cvec_urls, cvec_dest,
+                                            sizes.get("contentvec"), shas.get("contentvec"), execute))
     return steps
 
 

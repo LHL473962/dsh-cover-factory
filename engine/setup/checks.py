@@ -483,6 +483,57 @@ def check_ytdlp(cfg):
     return {"name": "ytdlp", "ok": False, "found": "yt-dlp 不可用（试过 %d 个 python）" % len(candidates), "path": candidates[0], "hint": hint + "；最后错误：" + last}
 
 
+def _torch_load_probe(py, path):
+    code = ("import sys,torch;"
+            "obj=torch.load(sys.argv[1],map_location='cpu',weights_only=False);"
+            "n=len(obj) if hasattr(obj,'__len__') else 0;"
+            "print('ok',n)")
+    rc, out = _run([py, "-c", code, path], timeout=300)
+    tail = (out.strip().splitlines() or [""])[-1]
+    return rc == 0, tail[:220]
+
+
+def check_embedder(cfg):
+    paths = _paths(cfg)
+    root = paths.get("applio_root") or ""
+    target = os.path.join(root, "rvc", "models", "embedders", "contentvec", "pytorch_model.bin") if root else ""
+    hint = ("补 contentvec：python engine/run.py setup --with-models --yes；"
+            "或手动下载 https://huggingface.co/lengyue233/content-vec-best/resolve/main/pytorch_model.bin "
+            "（镜像 https://hf-mirror.com/lengyue233/content-vec-best/resolve/main/pytorch_model.bin）"
+            " 放到 <applio_root>/rvc/models/embedders/contentvec/pytorch_model.bin")
+    if not root:
+        return {"name": "embedder", "ok": False, "found": "paths.applio_root 为空", "path": "", "hint": hint}
+    if not _is_file(target):
+        return {"name": "embedder", "ok": False, "found": "contentvec 缺失: " + target, "path": target, "hint": hint}
+    size = os.path.getsize(target)
+    want = int(((cfg.get("paths") or {}).get("model_sizes") or {}).get("contentvec") or 0)
+    if want and size != want:
+        return {"name": "embedder", "ok": False,
+                "found": "contentvec size=%d != %d" % (size, want), "path": target,
+                "hint": hint + "（删除现有文件后重下）"}
+    py = paths.get("applio_python") or paths.get("python") or sys.executable
+    if not _is_file(py):
+        return {"name": "embedder", "ok": False, "found": "torch 解释器不可用: " + str(py), "path": target, "hint": hint}
+    ok, detail = _torch_load_probe(py, target)
+    if not ok:
+        return {"name": "embedder", "ok": False,
+                "found": "contentvec torch.load 失败: " + detail, "path": target,
+                "hint": hint + "；torch.load 报错请重下或换 torch"}
+    # hubert 也实际 load 一次（若存在）
+    rvc_root = paths.get("rvc_root") or ""
+    hubert = paths.get("rvc_hubert") or (os.path.join(rvc_root, "assets", "hubert", "hubert_base.pt") if rvc_root else "")
+    if hubert and _is_file(hubert):
+        hpy = paths.get("rvc_python") or py
+        hok, hdetail = _torch_load_probe(hpy, hubert)
+        if not hok:
+            return {"name": "embedder", "ok": False,
+                    "found": "hubert torch.load 失败: " + hdetail, "path": hubert,
+                    "hint": hint + "；hubert 可从 rvc-models 重新复制"}
+        detail += "；hubert ok"
+    return {"name": "embedder", "ok": True, "found": "contentvec torch.load ok（%s）" % detail,
+            "path": target, "hint": ""}
+
+
 def check_fairseq(cfg):
     """训练/换声都依赖 fairseq（Applio 特征提取 + 旧版 RVC）。缺了会在训练/换声时炸，提前查。"""
     paths = _paths(cfg)
@@ -528,6 +579,7 @@ def run_checks(cfg):
         check_ffmpeg(cfg),
         check_msst(cfg),
         check_applio(cfg),
+        check_embedder(cfg),
         check_fairseq(cfg),
         check_old_rvc(cfg),
         check_ytdlp(cfg),

@@ -70,6 +70,7 @@
 | 旧版 RVC | ✅ | `git clone --depth 1 --branch <tag>` → 自动应用 `engine/vendor/rvc_patches`（torch>=2.6/PyAV/index 空兼容，备份 .orig）→ 复制本机权重 |
 | RVC 运行依赖 | ✅（`--install-rvc-deps`） | 装到 paths.rvc_python（跳过 torch/torchaudio）：numpy/librosa/faiss/pyworld/parselmouth 等，版本按本机 rvc-env 锁定 |
 | MSST 代码 + kim 权重 | ✅（--with-models） | clone 到 paths.msst_root；已有跳过；kim 约 871MB，断点续传/失败不中断 |
+| contentvec embedder | ✅（--with-models） | 378,342,945 B / sha256 d8dd400e...；落点 `<applio_root>/rvc/models/embedders/contentvec/pytorch_model.bin`；官方 HF 失败回退 hf-mirror；doctor 实际 torch.load |
 | Applio | ✅（--install-applio 或 --install 链） | 固定 tag 3.7.1；git clone 失败回退 codeload zip；venv + torch + requirements；**需要 Python 3.11+**；实测 8.1G/676 秒，预留 10G |
 | fairseq 0.12.2 | ✅（--install-fairseq 或 --install 链） | 预编译 zip + sha256；装到 paths.rvc_python 的 site-packages |
 | RVC hubert_base.pt + rmvpe.pt | ✅（--with-models） | 约 181MB + 173MB；已有跳过；URL 在 paths.model_sources，可配镜像 |

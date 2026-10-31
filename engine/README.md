@@ -8,7 +8,7 @@
       run.py                 CLI（init / run / status / cancel / delete / doctor / setup）
       config_default.json    默认参数（模型路径、混音参数、QA 阈值）
       setup/                 依赖体检/安装
-        checks.py            doctor 的 10 项检查（含显卡厂商/架构匹配、Applio/fairseq）
+        checks.py            doctor 的 11 项检查（含显卡/embedder/contentvec 实际 torch.load、Applio/fairseq）
         bootstrap.py         --check / --install，日志写 setup/setup.log
       stages/                10 个 stage，每个暴露 run(job, cfg) -> dict
         base.py              日志 / subprocess / 幂等签名 / 路径约定
@@ -333,6 +333,7 @@ Applio 安装会先按显卡装 torch/torchaudio，再把 requirements 里的 to
 | ffmpeg | 自动（pip imageio-ffmpeg）或手动 | bootstrap 装完会给出可执行文件路径，把它写进 paths.ffmpeg；失败则从 https://www.gyan.dev/ffmpeg/builds/ 下载 |
 | yt-dlp | 自动（pip，在 paths.ytdlp_python 环境里） | 只有 fetch search 抓取模式需要；import 模式不联网 |
 | MSST 代码 + MelBand kim 权重 | ✅（--with-models） | clone 到 paths.msst_root；kim 871MB、hubert 181MB、rmvpe 173MB，已存在跳过、断点续传 |
+| contentvec embedder | ✅（--with-models） | 378,342,945 B / sha256 d8dd400e…f65a4854e；固定放 `<applio_root>/rvc/models/embedders/contentvec/pytorch_model.bin`；官方 HF 失败自动回退 hf-mirror，.part 续传；doctor 实际 torch.load（213 张量） |
 | Applio | ✅ setup --install-applio --yes | clone 固定 tag 3.7.1（git 失败时回退 codeload zip）→ venv → torch（按显卡）→ requirements → import core 验证；需要 Python 3.11+；**实测 8.1G / 676 秒**（网络快），建议预留 10G |
 | fairseq 0.12.2（旧版 RVC） | ✅ setup --install-fairseq --yes | 预编译 zip（MIT，11.4MB，sha256 校验）解压到 paths.rvc_python 的 site-packages，再装 omegaconf/hydra/sacrebleu 等 |
 | 旧版 RVC 2.2.231006 | 自动 clone + 打补丁 + 拷本机权重 | clone 后自动应用 `engine/vendor/rvc_patches`（torch>=2.6/PyAV/index 空兼容，备份 .orig）；`hubert_base.pt`/`rmvpe.pt` 从 `paths.rvc_models_src` 递归复制 |
@@ -361,6 +362,12 @@ Applio 安装会先按显卡装 torch/torchaudio，再把 requirements 里的 to
 torch/torchaudio 不装（由 `--install-torch` / Applio venv 负责）；fairseq 单独 step。
 
 **实测**（Python 3.10 临时 venv + 已有 torch 2.8.0+cu128）：pip 安装 14 个包 **87 秒 / 687MB**，`import numpy,librosa,faiss,pyworld,parselmouth,ffmpeg,torchcrepe,av` 全过；重复执行 step 走 skipped。
+
+### contentvec 实测
+
+- 文件：`<applio_root>/rvc/models/embedders/contentvec/pytorch_model.bin`，**378,342,945 B**，sha256 `d8dd400e054ddf4e6be75dab5a2549db748cc99e756a097c496c099f65a4854e`（213 个张量，torch.load 通过）。
+- 缺失时 doctor `embedder` 红，hint 指向 `setup --with-models --yes`。
+- 用 file:// 模拟官方 URL 失败 → hf-mirror 回退：**10 秒**完成恢复并校验 size+sha；`.part` 预置 1MB + 本地 Range 服务续传：**1.02 秒**完成，sha 正确。真实公网 361MB 未跑（耗时取决于带宽）。
 **为什么不能打包整个环境**：torch/CUDA 必须按显卡与驱动选版本；MSST/RVC/Applio 的模型许可各不相同；整套依赖 5–10G。
 所以引擎做“体检 + pip/git 小件自动装 + 大权重按需下载”，不把环境塞进仓库。
 

@@ -29,14 +29,19 @@
       "msst_repo": "https://github.com/ZFTurbo/Music-Source-Separation-Training.git",
       "melband_kim": "https://huggingface.co/KimberleyJSN/melbandroformer/resolve/main/MelBandRoformer.ckpt",
       "hubert_base": "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/hubert_base.pt",
-      "rmvpe": "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/rmvpe.pt"
+      "rmvpe": "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/rmvpe.pt",
+      "contentvec": "https://huggingface.co/lengyue233/content-vec-best/resolve/main/pytorch_model.bin",
+      "contentvec_mirror": "https://hf-mirror.com/lengyue233/content-vec-best/resolve/main/pytorch_model.bin"
     },
     "model_sizes": {
       "melband_kim": 913106900,
       "hubert_base": 189507909,
-      "rmvpe": 181184272
+      "rmvpe": 181184272,
+      "contentvec": 378342945
     },
-    "model_sha256": {}
+    "model_sha256": {
+      "contentvec": "d8dd400e054ddf4e6be75dab5a2549db748cc99e756a097c496c099f65a4854e"
+    }
   },
   "audio": {
     "sample_rate": 44100,
