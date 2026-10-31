@@ -6,6 +6,7 @@ cwd 必须是 rvc 根目录；模型目录通过 weight_root 环境变量喂给 
 """
 
 import os
+import sys
 
 import numpy as np
 
@@ -54,6 +55,10 @@ def run(job, cfg):
     ccfg = cfg.get("convert") or {}
     pitch = base.clamp_int(opts.get("shift", 0), -12, 12)
     out = base.work(job, "convert", "vocal.wav")
+    hum_seg_cfg = str(opts.get("hummingSegments") or "").strip()
+    hum_seg_abs = ""
+    if hum_seg_cfg:
+        hum_seg_abs = hum_seg_cfg if os.path.isabs(hum_seg_cfg) else os.path.join(job.get("_workdir") or "", hum_seg_cfg)
     params = {
         "pitch": pitch,
         "f0_method": ccfg.get("f0_method", "rmvpe"),
@@ -61,9 +66,12 @@ def run(job, cfg):
         "protect": ccfg.get("protect", 0.33),
         "model": model_pth,
         "modelMtime": os.path.getmtime(model_pth),
+        "humming": str(opts.get("humming") or "keep").strip().lower(),
+        "hummingSegments": hum_seg_cfg,
     }
     target_vocals = base.work(job, "stems", stem, "vocals.wav")
     inputs = [vocals, model_pth] + ([target_vocals] if base.file_ok(target_vocals) else []) + (
+        [hum_seg_abs] if hum_seg_abs and base.file_ok(hum_seg_abs) else []) + (
         [model_idx] if base.file_ok(model_idx) else [])
 
     if base.recon(job, STAGE, inputs, params, [out]):
@@ -127,12 +135,53 @@ def run(job, cfg):
         except Exception as exc:  # noqa: BLE001
             base.log("convert: 警告：人声电平对齐异常：%s" % exc)
 
+    hum_mode = str(opts.get("humming") or "keep").strip().lower()
+    hum_report = base.work(job, "convert", "humming.json")
+    hum_fallback = False
+    hum_kept = None
+    hum_gain = None
+    hum_segments = ""
+    if hum_mode == "manual":
+        raw_seg = str(opts.get("hummingSegments") or "").strip()
+        if raw_seg:
+            hum_segments = raw_seg if os.path.isabs(raw_seg) else os.path.join(job.get("_workdir") or "", raw_seg)
+    if hum_mode in ("manual", "keep", "mute") and base.file_ok(target_vocals):
+        tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "tools", "humming_blend.py")
+        py = paths.get("rvc_python") or sys.executable
+        tmp = out + ".humming.wav"
+        cmd_h = [py, tool, "--source", target_vocals, "--converted", out, "--out", tmp,
+                 "--mode", hum_mode, "--report", hum_report,
+                 "--cache", base.work(job, "convert", "humming_words.json"),
+                 "--ffmpeg", ff]
+        if hum_mode == "manual" and hum_segments:
+            cmd_h += ["--segments", hum_segments]
+        base.log("convert: 哼唱段处理 mode=%s（manual=20ms 斜坡 / 其它=whisper+1.2s Hann）" % hum_mode)
+        res_h = base.run_cmd(cmd_h, timeout=float(ccfg.get("humming_timeout_sec", 1800)))
+        if res_h["returncode"] == 0 and base.file_ok(tmp):
+            os.replace(tmp, out)
+            rep_h = base.read_json(hum_report, {}) or {}
+            hum_kept = rep_h.get("hummingKeptRatio")
+            hum_gain = rep_h.get("gain")
+            hum_fallback = bool(rep_h.get("fallback"))
+            if rep_h.get("warning"):
+                base.log("convert: " + str(rep_h["warning"]))
+        else:
+            hum_fallback = True
+            base.log("convert: 警告：哼唱处理失败，保留未处理换声（%s）" % res_h.get("tail", "")[-300:])
+    elif hum_mode == "off":
+        base.log("convert: humming=off，不做哼唱保留")
+
     info = audio.probe(ff, out)
     metrics = {
         "pitch": pitch,
         "durationSec": info.get("duration_sec"),
         "indexRate": ccfg.get("index_rate", 0.75),
         "vocalAlignDb": round(float(align_db), 3) if align_db is not None else None,
+        "hummingMode": hum_mode,
+        "hummingKeptRatio": hum_kept,
+        "hummingGain": hum_gain,
+        "hummingFallback": hum_fallback,
         "elapsed_sec": res["elapsed_sec"],
     }
     base.log("convert: 完成（%.1fs）" % (info.get("duration_sec") or 0))

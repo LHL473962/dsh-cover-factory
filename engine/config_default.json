@@ -239,7 +239,7 @@
     "timeout_sec": 1800,
     "new": {
       "target_db": 0,
-      "vocal_db": 3,
+      "vocal_db": 0,
       "active_frame_ms": 50,
       "active_floor_db": -45,
       "low_shelf_freq": 120,

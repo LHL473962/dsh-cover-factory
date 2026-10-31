@@ -1,0 +1,121 @@
+<!doctype html><meta charset="utf-8"><title>哼唱段手动标记</title>
+<style>
+body{background:#0e1220;color:#e8ecf6;font:13px "Microsoft YaHei";padding:14px}
+h1{font-size:18px;margin:0 0 6px}.sub{color:#8a96b4;margin-bottom:10px}
+.card{background:#161c2e;border:1px solid #26304a;border-radius:10px;padding:10px;margin-bottom:10px}
+canvas{width:100%;height:160px;background:#0b1020;border:1px solid #26304a;border-radius:8px;cursor:crosshair;display:block}
+button{background:#3b6cff;color:#fff;border:0;border-radius:7px;padding:6px 11px;margin:4px 4px 0 0;cursor:pointer}
+button.gray{background:#252f47}button.on{background:#22c55e}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input[type=file]{color:#cfe0ff;font-size:12px}
+#segs{max-height:150px;overflow:auto;font-size:12px;color:#b8c4dc}
+.seg{padding:2px 0;border-bottom:1px solid #223050}
+#st{color:#9fb0d0;margin-top:8px}
+</style>
+<h1>哼唱段手动标记</h1><div class="sub">载入「原人声」和「换声后」，在波形上拖选区间并标记；生成后下载混合 WAV。</div>
+<div class="card"><div class="row">
+<label>原人声 <input type="file" id="fSrc" accept="audio/*"></label>
+<label>换声后 <input type="file" id="fCv" accept="audio/*"></label>
+<button onclick="loadFiles()">载入</button>
+<span id="st">未载入</span>
+</div></div>
+<div class="card">
+<canvas id="cv"></canvas>
+<div class="row" style="margin-top:6px">
+<button onclick="mark('keep')">标记：保留原声</button>
+<button onclick="mark('mute')">标记：静音</button>
+<button class="gray" onclick="mark('conv')">标记：换声</button>
+<button class="gray" onclick="clearSegs()">清空标记</button>
+<button class="gray" onclick="undo()">撤销</button>
+<button class="gray" onclick="togglePlay()">试听原声</button>
+</div>
+<div id="segs">（拖选波形后点标记）</div>
+</div>
+<div class="card"><div class="row">
+<button onclick="render('keep')">生成（保留原声段）</button>
+<button onclick="render('mute')">生成（静音段）</button>
+<button class="gray" onclick="exportJSON()">导出标记 JSON</button>
+<span id="st2"></span>
+</div></div>
+<script>
+let ctx=null, srcBuf=null, cvBuf=null, segs=[], sel=null, playing=null, rate=1;
+const el=id=>document.getElementById(id);
+const cv=el('cv'), c2=cv.getContext('2d');
+function st(t){el('st').textContent=t;}
+function st2(t){el('st2').textContent=t;}
+function fmt(t){return Math.floor(t/60)+':'+('0'+Math.floor(t%60)).slice(-2)+'.'+Math.floor((t%1)*10)}
+async function loadFiles(){
+ const a=el('fSrc').files[0], b=el('fCv').files[0];
+ if(!a||!b){st('两个文件都要选');return;}
+ if(!ctx){ctx=new (window.AudioContext||window.webkitAudioContext)();}
+ srcBuf=await ctx.decodeAudioData(await a.arrayBuffer());
+ cvBuf=await ctx.decodeAudioData(await b.arrayBuffer());
+ segs=[]; sel=null; draw(); st('已载入：'+srcBuf.duration.toFixed(1)+'s / 换声 '+cvBuf.duration.toFixed(1)+'s'); listSegs();
+}
+function draw(){
+ const W=cv.width=cv.clientWidth*devicePixelRatio, H=cv.height=160*devicePixelRatio;
+ c2.clearRect(0,0,W,H);
+ if(!srcBuf)return;
+ const data=srcBuf.getChannelData(0), n=data.length, step=Math.floor(n/W)||1;
+ c2.fillStyle='#3b5bff';
+ for(let x=0;x<W;x++){
+  let m=0; for(let i=x*step;i<(x+1)*step;i+=10){const v=Math.abs(data[i]||0); if(v>m)m=v;}
+  const h=m*H*0.9; c2.fillRect(x,(H-h)/2,1,h);
+ }
+ // 段落底色
+ const dur=srcBuf.duration;
+ for(const s of segs){const x0=s.a/dur*W,x1=s.b/dur*W;c2.fillStyle=s.type==='keep'?'rgba(34,197,94,.25)':s.type==='mute'?'rgba(239,68,68,.25)':'rgba(59,108,255,.15)';c2.fillRect(x0,0,x1-x0,H);}
+ if(sel){const x0=sel.a/dur*W,x1=sel.b/dur*W;c2.strokeStyle='#eab308';c2.lineWidth=2;c2.strokeRect(x0,0,x1-x0,H);}
+}
+let downX=null;
+cv.addEventListener('mousedown',e=>{downX=e.offsetX;sel=null;});
+cv.addEventListener('mousemove',e=>{if(downX==null||!srcBuf)return;const W=cv.clientWidth;const a=Math.min(downX,e.offsetX),b=Math.max(downX,e.offsetX);sel={a:a/W*srcBuf.duration,b:b/W*srcBuf.duration};draw();});
+window.addEventListener('mouseup',()=>{downX=null;});
+function mark(type){ if(!sel||!srcBuf){st('先在波形上拖选');return;} segs.push({a:sel.a,b:sel.b,type}); segs.sort((x,y)=>x.a-y.a); sel=null; draw(); listSegs(); }
+function undo(){segs.pop();draw();listSegs();}
+function clearSegs(){segs=[];sel=null;draw();listSegs();}
+function listSegs(){el('segs').innerHTML = segs.length? segs.map((s,i)=>'<div class="seg">'+i+'　'+fmt(s.a)+' → '+fmt(s.b)+'　'+({keep:'保留原声',mute:'静音',conv:'换声'})[s.type]+'</div>').join(''):'（拖选波形后点标记）';}
+function buildMask(n,dur,mode){
+ const m=new Float32Array(n).fill(1);
+ for(const s of segs){
+  const a=Math.max(0,Math.floor(s.a/dur*n)), b=Math.min(n,Math.ceil(s.b/dur*n));
+  const target = s.type==='keep'?0 : s.type==='mute'?0 : 1;
+  if(s.type==='conv') continue;
+  for(let i=a;i<b;i++) m[i]=target;
+ }
+ // 20ms 线性斜坡
+ const r=Math.max(1,Math.floor(0.02*(srcBuf.sampleRate)));
+ for(let i=1;i<n;i++){ if(m[i]!==m[i-1]){ const up=m[i]; for(let k=0;k<r&&i+k<n;k++){const t=k/r; m[i+k]=m[i+k]*(1-t)+up*t;} } }
+ return m;
+}
+function writeWav(samples,sr){
+ const n=samples.length; const buf=new ArrayBuffer(44+n*2); const v=new DataView(buf);
+ const w=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));};
+ w(0,'RIFF');v.setUint32(4,36+n*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,sr,true);v.setUint32(28,sr*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n*2,true);
+ for(let i=0;i<n;i++){let s=Math.max(-1,Math.min(1,samples[i]));v.setInt16(44+i*2,s<0?s*0x8000:s*0x7FFF,true);}
+ return new Blob([buf],{type:'audio/wav'});
+}
+function render(mode){
+ if(!srcBuf||!cvBuf){st2('先载入两个文件');return;}
+ const sr=srcBuf.sampleRate, dur=srcBuf.duration;
+ const n=Math.min(srcBuf.length,cvBuf.length);
+ const a=srcBuf.getChannelData(0), b=cvBuf.getChannelData(0);
+ const out=new Float32Array(n);
+ const m=buildMask(n,dur,mode);
+ for(let i=0;i<n;i++) out[i]=b[i]*m[i]+a[i]*(1-m[i]);
+ const blob=writeWav(out,sr); const url=URL.createObjectURL(blob);
+ const link=document.createElement('a'); link.href=url; link.download='vocal_manual.wav'; link.click();
+ st2('已生成 vocal_manual.wav（保留原声段）'); 
+}
+function exportJSON(){
+ const data={duration:srcBuf?srcBuf.duration:0,segments:segs};
+ const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+ const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='humming_segments.json';a.click();
+ st2('已导出 humming_segments.json');
+}
+function togglePlay(){
+ if(!srcBuf)return; if(playing){playing.stop();playing=null;return;}
+ playing=ctx.createBufferSource();playing.buffer=srcBuf;playing.connect(ctx.destination);playing.start();playing.onended=()=>{playing=null;};
+}
+window.addEventListener('resize',draw);
+</script>

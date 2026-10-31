@@ -245,6 +245,15 @@ def cmd_init(args):
         return fail_json("BAD_MIX_PRESET", "options.mixPreset 只能是 old / new，收到：" + str(options.get("mixPreset")))
     if "mixPreset" in options:
         options["mixPreset"] = str(options["mixPreset"]).strip().lower()
+    hum = str(options.get("humming") or "keep").strip().lower()
+    if hum not in ("keep", "mute", "off", "manual"):
+        return fail_json("BAD_HUMMING", "options.humming 只能是 keep / mute / off / manual，收到：" + str(options.get("humming")))
+    options["humming"] = hum
+    if "vocalDb" in options:
+        try:
+            options["vocalDb"] = float(options["vocalDb"])
+        except (TypeError, ValueError):
+            return fail_json("BAD_VOCAL_DB", "options.vocalDb 必须是数字（dB），收到：" + str(options.get("vocalDb")))
 
     job_id = sanitize_id(config.get("id") or default_job_id(config, workdir))
     prev = None if args.reset else base.read_json(job_path, None)

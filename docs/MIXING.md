@@ -99,8 +99,8 @@ gain = (instActiveDb + targetDb) - vocalActiveDb
 | 项 | old（kim 声库） | new（bs317 声库） |
 |---|---|---|
 | 人声基准 | 原曲比例（目标 vocals 对齐） | 活跃帧等响，人声 = 伴奏 |
-| ratio 目标 | unity（ratio_src） | **ratioActive = +3 dB** |
-| 额外人声增益 | 0 dB | **+3 dB**（targetDb=0，vocalDb=+3） |
+| ratio 目标 | unity（ratio_src） | **ratioActive = options.vocalDb**（默认 0；要 +3 就设 3） |
+| 额外人声增益 | 0 dB | **vocalDb** 每首可调（默认 0；targetDb 固定 0） |
 | EQ | 260 −1.2 / 9k +1.6 | 120 −2 / 800 −2 / 3k +3 / 9k −2 |
 | 饱和 | 无 | tanh 软削波 threshold **0.5** |
 | 混响 | IR 湿 0.30 | IR 湿 0.10 / 干 0.90 |

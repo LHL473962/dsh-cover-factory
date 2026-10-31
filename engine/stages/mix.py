@@ -148,8 +148,9 @@ def _run_new(job, cfg, tgt, stem, inst, vocal, target_vocals, ir, ir_used, shift
     i_active = _active_median_db(ff, inst, ncfg.get("active_frame_ms", 50), ncfg.get("active_floor_db", -45))
     if v_active is None or i_active is None:
         return base.result("failed", [], {}, error="new 预设：活跃帧电平测不到（人声或伴奏）")
+    opts = job.get("options") or {}
     target_db = float(ncfg.get("target_db", 0.0))
-    vocal_db = float(ncfg.get("vocal_db", 3.0))
+    vocal_db = float(opts["vocalDb"]) if "vocalDb" in opts else float(ncfg.get("vocal_db", 0.0))
     gain = (float(i_active) + target_db + vocal_db) - float(v_active)
     ratio_active = (float(v_active) + gain) - float(i_active)
     ratio_info = {
