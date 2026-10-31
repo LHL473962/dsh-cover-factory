@@ -128,11 +128,15 @@ def _report_md(job, cfg, qa, mix_metrics, export_metrics):
                 str((qa.get("evalLeak") or {}).get("warning") or "目标曲命中训练集（见 qa/report.json）"))
             if (qa.get("evalLeak") or {}).get("hit") else "未命中训练集"),
         "- 人声/伴奏比例：" + (
-            "src %+.2f / mix %+.2f dB（Δ %+.2f）" % (
+            "new ratioActive=%+.2f dB" % float(qa.get("ratioActive") or 0)
+            if qa.get("mixPreset") == "new" else
+            ("src %+.2f / mix %+.2f dB（Δ %+.2f）" % (
                 float((qa.get("vocalBackingRatio") or {}).get("src") or 0),
                 float((qa.get("vocalBackingRatio") or {}).get("mix") or 0),
                 float((qa.get("vocalBackingRatio") or {}).get("delta") or 0))
-            if (qa.get("vocalBackingRatio") or {}).get("src") is not None else "未测"),
+             if (qa.get("vocalBackingRatio") or {}).get("src") is not None else "未测")),
+        "- 混音预设：" + str(qa.get("mixPreset") or "old") + (
+            "（不归一化，只峰值保护）" if qa.get("mixPreset") == "new" else "（归一化 -14 LUFS）"),
         "- 断音率：%s 次/分（合格线 < 12）" % (qmetrics.get("gapPerMin") if qmetrics.get("gapPerMin") is not None else "未测"),
         "- 音域覆盖：%s（合格线 >= 70%%）" % _pct(qmetrics.get("rangeCoverage")),
         "",

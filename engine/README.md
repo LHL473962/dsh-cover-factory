@@ -134,6 +134,23 @@ convert 完成后会先把换声人声 RMS 对齐目标 vocals（记录 `vocalAl
         --instrumental <target_instrumental.wav> --out <dir> [--job <job.json>]
 
 A/B 匿名输出，bank 映射只写 `mapping.json` 不打印；先自检比例，不通过拒绝输出。
+
+### 两套混音标准（old / new）
+
+`job.options.mixPreset` 显式指定 old/new；不写时按声库元数据自动：bs317 → new，kim → old。
+
+| 项 | old（默认，kim 库） | new（bs317 库） |
+| --- | --- | --- |
+| 人声基准 | 原曲比例，convert 对齐目标 vocals | 活跃帧(50ms, >-45dB)等响，目标 0dB，再 +3dB |
+| EQ | 260 −1.2 / 9k +1.6 | 120 −2 / 800 −2 / 3k +3 / 9k −2 |
+| 饱和 | 无 | tanh 软削波 threshold 0.5 |
+| IR | 湿 0.30 / 干 0.70 | 湿 0.10 / 干 0.90 |
+| 加宽 | 人声 1.8 / 伴奏 1.15 | 不加宽 |
+| 总线 glue | 1.3:1 | 关闭（ratio 1.0） |
+| 响度 | 归一化 −14 LUFS | 不归一化；只 limiter −1dB 保峰值 |
+| 报告 | vocalBackingRatio | mixPreset / vocalGainDb / ratioActive / peak / lufs |
+
+qa：old 仍卡 −13±1.5 LUFS；new 不卡响度，只卡峰值和削波（削波样本数=0）。doctor 输出 `mixPresets` 字段同样打印这两套摘要。
 ### 混音极性
 
 `alimiter` 的 attack 是 lookahead：默认 5ms 会让输出整体延迟约 219 samples，导致“成品 vs 伴奏”0 延迟相关假性为负。

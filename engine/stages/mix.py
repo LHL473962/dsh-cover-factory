@@ -30,6 +30,63 @@ def _decode_mono(ff, path, sr=44100):
     return x.mean(axis=1) if x.ndim > 1 else x
 
 
+def _active_median_db(ff, path, frame_ms=50.0, floor_db=-45.0):
+    x = _decode_mono(ff, path).astype(np.float64)
+    win = max(1, int(round(44100 * float(frame_ms) / 1000.0)))
+    n = len(x) // win
+    if n <= 0:
+        return None
+    vals = []
+    for i in range(n):
+        seg = x[i * win:(i + 1) * win]
+        rms = float(np.sqrt(np.mean(seg * seg)))
+        db = 20.0 * math.log10(rms + 1e-12)
+        if db > float(floor_db):
+            vals.append(db)
+    if not vals:
+        return None
+    return float(np.median(vals))
+
+
+def _separator_from_meta(meta):
+    sep = str((meta or {}).get("separator") or (meta or {}).get("separateModel")
+              or (meta or {}).get("separate_model") or "").strip().lower()
+    if sep in ("kim", "bs317"):
+        return sep
+    blob = " ".join(str((meta or {}).get(k) or "") for k in ("modelId", "singer", "source", "jobId")).lower()
+    if "bs317" in blob:
+        return "bs317"
+    if "kim" in blob:
+        return "kim"
+    return ""
+
+
+def resolve_mix_preset(job, cfg):
+    """显式 mixPreset > 声库 meta.separator > job 分离模型；bs317=new，kim=old。"""
+    opts = job.get("options") or {}
+    explicit = str(opts.get("mixPreset") or "").strip().lower()
+    if explicit in ("old", "new"):
+        return explicit, "explicit", ""
+    candidates = []
+    reuse = opts.get("reuseModel") if isinstance(opts.get("reuseModel"), str) else ""
+    if reuse:
+        candidates.append(os.path.splitext(reuse)[0] + ".meta.json")
+        candidates.append(os.path.splitext(reuse)[0] + ".json")
+    model_meta = base.work(job, "model", base.model_id(job, cfg), "model.json")
+    candidates.append(model_meta)
+    for mp in candidates:
+        if not mp or not os.path.isfile(mp):
+            continue
+        sep = _separator_from_meta(base.read_json(mp, {}) or {})
+        if sep:
+            return ("new" if sep == "bs317" else "old"), "bank-meta", sep
+    sep = str((job.get("separate_model") or {}).get("id")
+              or opts.get("separateModel") or "").strip().lower()
+    if sep in ("kim", "bs317"):
+        return ("new" if sep == "bs317" else "old"), "separate-model", sep
+    return "old", "default", ""
+
+
 def _best_corr(ff, mix_path, inst_path, max_lag=300):
     """返回 (0 延迟相关, ±max_lag 内最佳相关, lag)。
 
@@ -74,6 +131,86 @@ def _invert_wav(ff, path, timeout):
     return True
 
 
+def _run_new(job, cfg, tgt, stem, inst, vocal, target_vocals, ir, ir_used, shift):
+    mcfg = cfg.get("mix") or {}
+    ncfg = mcfg.get("new") or {}
+    paths = cfg.get("paths") or {}
+    ff = audio.find_ffmpeg(paths)
+    out = base.work(job, "mix", "out.wav")
+    premix = base.work(job, "mix", "_tmp", "premix.wav")
+    report_path = base.work(job, "mix", "report.json")
+    params = {"preset": "new", "shift": shift, "mix": mcfg, "new": ncfg,
+              "ir": os.path.basename(ir) if ir_used else None}
+    inputs = [vocal, inst, target_vocals] + ([ir] if ir_used else [])
+    timeout = float(mcfg.get("timeout_sec", 1800))
+
+    v_active = _active_median_db(ff, vocal, ncfg.get("active_frame_ms", 50), ncfg.get("active_floor_db", -45))
+    i_active = _active_median_db(ff, inst, ncfg.get("active_frame_ms", 50), ncfg.get("active_floor_db", -45))
+    if v_active is None or i_active is None:
+        return base.result("failed", [], {}, error="new 预设：活跃帧电平测不到（人声或伴奏）")
+    target_db = float(ncfg.get("target_db", 0.0))
+    vocal_db = float(ncfg.get("vocal_db", 3.0))
+    gain = (float(i_active) + target_db + vocal_db) - float(v_active)
+    ratio_active = (float(v_active) + gain) - float(i_active)
+    ratio_info = {
+        "activeVocalDb": round(float(v_active), 3),
+        "activeInstDb": round(float(i_active), 3),
+        "targetDb": target_db,
+        "vocalDb": vocal_db,
+        "ratioActive": round(float(ratio_active), 3),
+        "gainDb": round(float(gain), 3),
+    }
+    if base.recon(job, STAGE, inputs, params, [out]):
+        base.log("mix: new 产物已存在且输入未变，跳过")
+        return base.result("skipped", [base.rel(job, out)], dict(base.prev_metrics(job, STAGE)), reason="产物已存在且输入未变")
+
+    base.ensure_dir(os.path.dirname(premix))
+    render_cmd, _graph, used_ir = commands.mix_render_new_cmd(
+        ff, cfg, vocal, inst, premix, ir_path=ir, shift=shift, gain_db=gain)
+    base.log("mix: new 渲染（gain=%+.2fdB, IR=%s, 无归一化）" % (gain, used_ir))
+    res = base.run_cmd(render_cmd, timeout=timeout)
+    if res["returncode"] != 0 or not base.file_ok(premix):
+        return base.result("failed", [], {"mixPreset": "new", "vocalGainDb": round(gain, 3)},
+                           error="new 混音渲染失败（exit=%s）：%s" % (res["returncode"], res["tail"][-1200:]))
+    res2 = base.run_cmd(commands.mix_master_new_cmd(ff, cfg, premix, out), timeout=timeout)
+    if res2["returncode"] != 0 or not base.file_ok(out):
+        return base.result("failed", [], {"mixPreset": "new", "vocalGainDb": round(gain, 3)},
+                           error="new 峰值保护失败（exit=%s）：%s" % (res2["returncode"], res2["tail"][-1200:]))
+
+    loud = audio.loudness(ff, out)
+    peak = loud.get("peak_db")
+    lufs = loud.get("lufs")
+    metrics = {
+        "mixPreset": "new",
+        "vocalGainDb": round(float(gain), 3),
+        "ratioActive": round(float(ratio_active), 3),
+        "activeVocalDb": ratio_info["activeVocalDb"],
+        "activeInstDb": ratio_info["activeInstDb"],
+        "normalized": False,
+        "targetLufs": None,
+        "lufs": lufs,
+        "peak": peak,
+        "peakDb": peak,
+        "limiterDb": float(ncfg.get("limiter_db", -1.0)),
+        "irUsed": used_ir,
+        "irWet": float(ncfg.get("ir_wet", 0.1)) if used_ir else 0.0,
+        "shift": shift,
+        "elapsed_sec": round(res["elapsed_sec"] + res2["elapsed_sec"], 1),
+    }
+    base.write_json(report_path, {
+        "ok": True,
+        "mixPreset": "new",
+        "vocalGainDb": metrics["vocalGainDb"],
+        "ratioActive": metrics["ratioActive"],
+        "peak": peak,
+        "lufs": lufs,
+        "vocalBackingRatio": {"src": None, "mix": None, "delta": None},
+        "metrics": metrics,
+    })
+    base.log("mix: new 完成 peak=%s dBFS LUFS=%s（无归一化）" % (peak, lufs))
+    return base.result("done", [base.rel(job, out)], metrics, input_hash=base.sig(job, inputs, params))
+
+
 def run(job, cfg):
     tgt = base.target_entry(job)
     if not tgt:
@@ -106,10 +243,15 @@ def run(job, cfg):
     if not ir_used:
         base.log("mix: 没找到 IR（%s），本次不带卷积混响" % ir)
 
+    preset, preset_source, separator = resolve_mix_preset(job, cfg)
+    base.log("mix: preset=%s（来源 %s，声库分离器 %s）" % (preset, preset_source, separator or "未记录"))
+    if preset == "new":
+        return _run_new(job, cfg, tgt, stem, inst, vocal, target_vocals, ir, ir_used, shift)
+
     out = base.work(job, "mix", "out.wav")
     premix = base.work(job, "mix", "_tmp", "premix.wav")
     report_path = base.work(job, "mix", "report.json")
-    params = {"shift": shift, "mix": mcfg, "ir": os.path.basename(ir) if ir_used else None}
+    params = {"mixPreset": "old", "shift": shift, "mix": mcfg, "ir": os.path.basename(ir) if ir_used else None}
     inputs = [vocal, inst, target_vocals] + ([ir] if ir_used else [])
 
     ff = audio.find_ffmpeg(cfg.get("paths"))
@@ -146,7 +288,7 @@ def run(job, cfg):
                                           base.rel(job, vocal), base.rel(job, inst)))
         base.log("mix: FAIL " + msg)
         base.ensure_dir(os.path.dirname(report_path))
-        base.write_json(report_path, {"ok": False, "vocalBackingRatio": ratio_info, "error": msg})
+        base.write_json(report_path, {"ok": False, "mixPreset": "old", "vocalBackingRatio": ratio_info, "error": msg})
         return base.result("failed", [], {"vocalBackingRatio": ratio_info}, error=msg)
 
     if base.recon(job, STAGE, inputs, params, [out]):
@@ -270,8 +412,9 @@ def run(job, cfg):
         "polarityCorr": polarity_corr,
         "polarityLag": polarity_lag,
         "vocalBackingRatio": ratio_info,
+        "mixPreset": "old",
         "elapsed_sec": round(res["elapsed_sec"] + master_elapsed, 1),
     }
-    base.write_json(report_path, {"ok": True, "vocalBackingRatio": ratio_info, "metrics": metrics})
+    base.write_json(report_path, {"ok": True, "mixPreset": "old", "vocalBackingRatio": ratio_info, "metrics": metrics})
     base.log("mix: 完成 LUFS=%s peak=%s finalPeak=%s dBFS" % (metrics["lufs"], metrics["peakDb"], metrics["finalPeak"]))
     return base.result("done", [base.rel(job, out)], metrics, input_hash=base.sig(job, inputs, params))

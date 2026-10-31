@@ -36,6 +36,7 @@ input[type=range]{width:100%}label{color:#b8c4dc}
    <div class="cell"><label>压缩阈值 <span class="val" id="ctv">-15</span></label><input id="compTh" type="range" min="-30" max="0" step="1" value="-15"></div>
    <div class="cell"><label>并联压缩 <span class="val" id="pcv">0.00</span></label><input id="par" type="range" min="0" max="1" step="0.02" value="0"></div>
    <div class="cell"><label>限制阈值 <span class="val" id="ltv">-2</span></label><input id="limTh" type="range" min="-6" max="0" step="0.5" value="-2"></div>
+   <div class="cell"><label>人声目标（比伴奏低） <span class="val" id="tgv">-4 dB</span></label><input id="target" type="range" min="-10" max="0" step="0.5" value="-4"></div>
  </div>
  <div id="tracks"></div>
  <div id="st">未载入</div>
@@ -67,6 +68,13 @@ function initCtx(){
  analyser=ctx.createAnalyser();analyser.fftSize=1024;
  masterGain.connect(analyser);analyser.connect(ctx.destination);
 }
+function activeDb(buf){
+ let data=buf.getChannelData(0); const n=Math.floor(buf.sampleRate*0.05), m=Math.floor(data.length/n);
+ const env=[]; for(let i=0;i<m;i++){let s=0;for(let k=i*n;k<(i+1)*n;k++)s+=data[k]*data[k];env.push(Math.sqrt(s/n));}
+ if(!env.length)return -60;
+ const db=env.map(v=>20*Math.log10(Math.max(v,1e-9))).filter(d=>d>-45).sort((a,b)=>a-b);
+ return db.length?db[Math.floor(db.length/2)]:-60;
+}
 function dur(){let d=0;for(const t of tracks)d=Math.max(d,t.buffer.duration);return d;}
 function renderTracks(){
  const box=el('tracks');box.innerHTML='';
@@ -74,7 +82,9 @@ function renderTracks(){
   const d=document.createElement('div');d.className='track';
   d.innerHTML='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="min-width:170px;color:#cfe0ff">'+t.name+
    '</span><span style="color:#8a96b4;font-size:12px">'+tfmt(t.buffer.duration)+'</span>'+
-   '<button class="'+(t.mute?'on':'ghost')+'" data-i="'+i+'" data-k="m">静音</button></div>'+
+   '<button class="'+(t.mute?'on':'ghost')+'" data-i="'+i+'" data-k="m">静音</button>'+
+   '<button class="ghost" data-i="'+i+'" data-k="auto">自动增益</button>'+
+   '<button class="ghost" data-i="'+i+'" data-k="flat">归零</button></div>'+
    '<div class="grid">'+
    cell(i,'g','增益',-40,6,0.5,t.gainDb,' dB')+
    cell(i,'p','声像',-1,1,0.05,t.pan,'')+
@@ -88,6 +98,14 @@ function renderTracks(){
   box.appendChild(d);
  });
  box.querySelectorAll('button[data-k=m]').forEach(b=>b.onclick=()=>{const i=+b.dataset.i;tracks[i].mute=!tracks[i].mute;renderTracks();apply();});
+ box.querySelectorAll('button[data-k=auto]').forEach(b=>b.onclick=()=>{const i=+b.dataset.i;
+   const own=activeDb(tracks[i].buffer);
+   let others=[];tracks.forEach((t,j)=>{if(j!==i&&!t.mute)others.push(activeDb(t.buffer));});
+   const ref=others.length?Math.max(...others):-12;
+   tracks[i].gainDb=Math.round(((ref+parseFloat(el('target').value))-own)*2)/2;
+   renderTracks();apply();});
+ box.querySelectorAll('button[data-k=flat]').forEach(b=>b.onclick=()=>{const i=+b.dataset.i;const t=tracks[i];
+   t.gainDb=0;t.pan=0;t.low=0;t.mid=0;t.pres=0;t.air=0;t.sat=0;t.rev=0;renderTracks();apply();});
  box.querySelectorAll('input[type=range]').forEach(s=>s.oninput=()=>{
   const i=+s.dataset.i,k=s.dataset.k,v=parseFloat(s.value),t=tracks[i];
   if(k==='g')t.gainDb=v; if(k==='p')t.pan=v; if(k==='l')t.low=v; if(k==='m2')t.mid=v;
@@ -166,5 +184,6 @@ function meter(){if(!playing)return;const a=new Float32Array(analyser.fftSize);a
  el('mfill').style.width=Math.max(0,Math.min(100,(db+60)/60*100))+'%';requestAnimationFrame(meter);}
 function seek(e){const r=el('bar').getBoundingClientRect();const p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));const off=p*dur();
  if(playing)playFrom(off);else{offset=off;el('fill').style.width=(p*100)+'%';el('time').textContent=tfmt(off)+' / '+tfmt(dur());}}
-el('master').oninput=apply;['compRatio','compTh','limTh','par'].forEach(id=>el(id).oninput=apply);
+el('master').oninput=apply;
+const tg=el('target'); if(tg) tg.oninput=()=>el('tgv').textContent=(+tg.value).toFixed(1)+' dB';['compRatio','compTh','limTh','par'].forEach(id=>el(id).oninput=apply);
 </script>

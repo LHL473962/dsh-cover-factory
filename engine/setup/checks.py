@@ -590,4 +590,7 @@ def doctor_payload(cfg):
     checks = run_checks(cfg)
     # optional=True 的项目（如无 CUDA 时的 gpu_torch_match）不计入整体失败
     ok = all(c.get("ok") or c.get("optional") for c in checks)
-    return {"ok": ok, "checks": checks}
+    return {"ok": ok, "checks": checks, "mixPresets": {
+        "old": "unity 原比例 + IR 0.30 + 加宽/glue + -14 LUFS + limiter -1.5",
+        "new": "active 等响 +3dB + IR 0.10 + 软削波 + 无归一化 + limiter -1.0",
+    }}

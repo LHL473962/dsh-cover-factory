@@ -339,6 +339,9 @@ def _register_bank(cfg, job, fingerprint, pth, idx, meta):
             if not (base.file_ok(bi) and os.path.getsize(bi) == os.path.getsize(idx)):
                 shutil.copy2(idx, bi)
         bank_meta = dict(meta or {})
+        sep = ((job.get("separate_model") or {}).get("id")
+               or (job.get("options") or {}).get("separateModel") or "kim")
+        bank_meta.setdefault("separator", str(sep).strip().lower())
         bank_meta.update({
             "fingerprint": fingerprint,
             "singer": job.get("singer") or "",
@@ -569,6 +572,8 @@ def run(job, cfg):
         "source": latest[0],
         "index": idx,
         "targetEpochs": epochs,
+        "separator": ((job.get("separate_model") or {}).get("id")
+                      or (job.get("options") or {}).get("separateModel") or "kim"),
     }
     bank = _register_bank(cfg, job, fingerprint, model_pth, idx_path, meta)
     if bank.get("bankPth"):

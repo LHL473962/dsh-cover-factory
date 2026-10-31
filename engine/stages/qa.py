@@ -12,6 +12,8 @@
 import hashlib
 import os
 
+import numpy as np
+
 from stages import base
 
 STAGE = "qa"
@@ -130,6 +132,11 @@ def run(job, cfg):
     mix_rep = base.read_json(mix_report_path, {}) or {}
     ratio = mix_rep.get("vocalBackingRatio") or (
         ((job.get("stages") or {}).get("mix") or {}).get("metrics") or {}).get("vocalBackingRatio")
+    mix_preset = str(mix_rep.get("mixPreset") or (
+        ((job.get("stages") or {}).get("mix") or {}).get("metrics") or {}).get("mixPreset")
+        or (job.get("options") or {}).get("mixPreset") or "old").lower()
+    ratio_active = mix_rep.get("ratioActive") or (
+        ((job.get("stages") or {}).get("mix") or {}).get("metrics") or {}).get("ratioActive")
     ratio_tol = 0.5
 
     # 期望声部：options.voice > select 的 expectedVoice > dataset 中位；音域用宽区间
@@ -158,6 +165,7 @@ def run(job, cfg):
         "expectedVoice": expected_voice,
         "voiceRange": list(voice_range),
         "datasetSig": dataset_sig,
+        "mixPreset": mix_preset,
     }
     inputs = [mix]
     if base.file_ok(mix_report_path):
@@ -227,12 +235,23 @@ def run(job, cfg):
         problems.append("时长 %.0fs < %.0fs" % (duration, min_dur))
         suggestions.append("检查目标曲/伴奏是否截断")
 
-    checks["peak"] = bool(peak is None or float(peak) <= peak_max)
+    is_new = mix_preset == "new"
+    peak_limit = -1.0 if is_new else peak_max
+    checks["peak"] = bool(peak is None or float(peak) <= peak_limit)
     if not checks["peak"]:
-        problems.append("峰值 %.1f dBFS > %.1f" % (float(peak), peak_max))
+        problems.append("峰值 %.1f dBFS > %.1f" % (float(peak), peak_limit))
         suggestions.append("降低 limiter 阈值（mix.limiter_db）或减小等响增益")
 
-    if lufs is None:
+    if is_new:
+        # new 预设不做 -14 LUFS 归一化：响度只记录，不判不合格；只卡峰值/削波
+        checks["loudness"] = None
+        x44 = audio.decode(ff, mix, 44100, 2, timeout=timeout)
+        clipped = int(np.sum(np.abs(np.asarray(x44)) >= 0.999)) if len(x44) else 0
+        checks["clipping"] = clipped == 0
+        if not checks["clipping"]:
+            problems.append("检测到削波样本 %d 个（new 预设只做峰值保护，不能硬削）" % clipped)
+            suggestions.append("降低 new 预设 auto-gain 的 vocalDb，或检查 asoftclip/limiter")
+    elif lufs is None:
         checks["loudness"] = None
         problems.append("读不到整体响度（ebur128 无 Summary）")
     else:
@@ -264,7 +283,9 @@ def run(job, cfg):
         problems.append("音域覆盖未测：缺少目标人声 stem 或期望音域配置")
         suggestions.append("确认目标曲人声 stem 存在、qa.voice_ranges 配置有效")
 
-    if ratio and ratio.get("delta") is not None:
+    if is_new:
+        checks["vocalBackingRatio"] = None  # new 用 ratioActive，不套 old 的 ratio_src
+    elif ratio and ratio.get("delta") is not None:
         try:
             delta = float(ratio.get("delta"))
             checks["vocalBackingRatio"] = abs(delta) <= ratio_tol
@@ -298,6 +319,8 @@ def run(job, cfg):
         "pitchRange": pitch_range,
         "targetMedianF0": target_f0_summary.get("median"),
         "evalLeakHit": bool(leak.get("hit")),
+        "mixPreset": mix_preset,
+        "ratioActive": ratio_active,
         "vocalBackingRatio": ratio or {"src": None, "mix": None, "delta": None},
         "warnings": warnings,
         "problems": problems,
@@ -312,6 +335,8 @@ def run(job, cfg):
         "checks": checks,
         "metrics": metrics,
         "evalLeak": leak,
+        "mixPreset": mix_preset,
+        "ratioActive": ratio_active,
         "vocalBackingRatio": ratio or {"src": None, "mix": None, "delta": None},
         "warnings": warnings,
         "thresholds": {
@@ -354,6 +379,7 @@ def _write_md(path, job, report):
     names = {
         "stereo": "立体声", "duration": "时长", "peak": "峰值", "loudness": "响度",
         "gapRate": "断音率", "rangeCoverage": "音域覆盖", "vocalBackingRatio": "人声/伴奏比例",
+        "clipping": "削波",
     }
     values = {
         "stereo": str(m.get("durationSec") or ""),
@@ -363,16 +389,24 @@ def _write_md(path, job, report):
         "gapRate": "%s 次/分" % m.get("gapPerMin"),
         "rangeCoverage": "%s" % (("%.0f%%" % (float(m["rangeCoverage"]) * 100)) if m.get("rangeCoverage") is not None else "未测"),
         "vocalBackingRatio": "未测",
+        "clipping": "未测",
     }
     r = m.get("vocalBackingRatio") or {}
     if r.get("src") is not None and r.get("mix") is not None:
         values["vocalBackingRatio"] = "src %+.2f / mix %+.2f dB（Δ %+.2f）" % (
             float(r.get("src")), float(r.get("mix")), float(r.get("delta") or 0))
-    for k in ("stereo", "duration", "peak", "loudness", "gapRate", "rangeCoverage", "vocalBackingRatio"):
+    if m.get("mixPreset") == "new":
+        values["loudness"] = "%s LUFS（new 不归一化，仅参考）" % m.get("lufs")
+        values["clipping"] = "无" if checks.get("clipping") is True else "有/未测"
+    for k in ("stereo", "duration", "peak", "loudness", "gapRate", "rangeCoverage", "vocalBackingRatio", "clipping"):
         v = checks.get(k)
         verdict = "通过" if v is True else ("不合格" if v is False else "未测")
         lines.append("| %s | %s | %s |" % (names.get(k, k), values.get(k, ""), verdict))
-    lines.extend(["", "合格线：响度 -13 +- 1.5 LUFS；断音率 < 12 次/分；音域覆盖 >= 70%；峰值 <= -0.5 dBFS；stereo 且时长 >= 30s。", ""])
+    lines.extend(["", "合格线：old 预设 -13 +- 1.5 LUFS；new 预设不归一化，只卡峰值/削波；断音率 < 12 次/分；音域覆盖 >= 70%；峰值 old <= -0.5 / new <= -1.0 dBFS；stereo 且时长 >= 30s。", ""])
+    if m.get("mixPreset") == "new":
+        lines.append("- 混音预设：new；ratioActive=%s dB；lufs=%s（参考，不归一化）" % (
+            m.get("ratioActive"), m.get("lufs")))
+        lines.append("")
     leak = report.get("evalLeak") or {}
     if leak.get("hit"):
         msg = str(leak.get("warning") or "目标曲命中训练集")

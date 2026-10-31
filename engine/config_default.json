@@ -236,7 +236,22 @@
     "inst_widen": 1.15,
     "glue_ratio": 1.3,
     "glue_threshold_db": -15,
-    "timeout_sec": 1800
+    "timeout_sec": 1800,
+    "new": {
+      "target_db": 0,
+      "vocal_db": 3,
+      "active_frame_ms": 50,
+      "active_floor_db": -45,
+      "low_shelf_freq": 120,
+      "low_shelf_gain_db": -2,
+      "peak_800_gain_db": -2,
+      "peak_3k_gain_db": 3,
+      "peak_9k_gain_db": -2,
+      "softclip_threshold": 0.5,
+      "ir_wet": 0.1,
+      "limiter_db": -1.0,
+      "glue_ratio": 1.0
+    }
   },
   "qa": {
     "loudness_target": -13,

@@ -224,6 +224,54 @@ def mix_master_cmd(ff, cfg, src, dst, gain_db):
     return [ff, "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-af", af, "-ac", "2", "-c:a", "pcm_s16le", dst]
 
 
+def mix_filter_new(cfg, ir_path=None, shift=0, gain_db=0.0):
+    """new 预设：auto-gain + 音色链 + 软削波 + IR 干0.90/湿0.10 + 无 glue、无 -14 归一化。"""
+    m = cfg.get("mix") or {}
+    n = m.get("new") or {}
+    vocal = ("[0:a]volume=%.3fdB,aresample=44100,lowshelf=f=%s:g=%s,"
+             "equalizer=f=800:width_type=q:width=1.0:g=%s,"
+             "equalizer=f=3000:width_type=q:width=1.0:g=%s,"
+             "equalizer=f=9000:width_type=q:width=1.0:g=%s,"
+             "asoftclip=type=tanh:threshold=%s") % (
+                 float(gain_db),
+                 n.get("low_shelf_freq", 120), n.get("low_shelf_gain_db", -2),
+                 n.get("peak_800_gain_db", -2), n.get("peak_3k_gain_db", 3),
+                 n.get("peak_9k_gain_db", -2), n.get("softclip_threshold", 0.5))
+    shift = int(shift or 0)
+    inst = "[1:a]aresample=44100"
+    if shift:
+        ratio = 2.0 ** (shift / 12.0)
+        inst += ",asetrate=%.4f,aresample=44100,atempo=%.6f" % (44100.0 * ratio, 1.0 / ratio)
+    bus = ("[v][i]amix=inputs=2:normalize=0,"
+           "acompressor=threshold=-15dB:ratio=%s:attack=20:release=250,"
+           "aformat=channel_layouts=stereo[out]") % n.get("glue_ratio", 1.0)
+    if ir_path and os.path.isfile(ir_path):
+        wet = float(n.get("ir_wet", 0.1))
+        graph = (vocal + ",volume=0.90,asplit=2[v1][vs];"
+                 "[vs][2:a]afir=dry=0:wet=1[w0];[w0]volume=%s[w];"
+                 "[v1][w]amix=inputs=2:normalize=0[v];" % wet
+                 + inst + "[i];" + bus)
+        return graph, True
+    return vocal + ",anull[v];" + inst + "[i];" + bus, False
+
+
+def mix_render_new_cmd(ff, cfg, vocal, inst, out, ir_path=None, shift=0, gain_db=0.0):
+    graph, ir_used = mix_filter_new(cfg, ir_path=ir_path, shift=shift, gain_db=gain_db)
+    cmd = [ff, "-y", "-hide_banner", "-loglevel", "error", "-i", vocal, "-i", inst]
+    if ir_used:
+        cmd.extend(["-i", ir_path])
+    cmd.extend(["-filter_complex", graph, "-map", "[out]", "-ac", "2", "-c:a", "pcm_f32le", out])
+    return cmd, graph, ir_used
+
+
+def mix_master_new_cmd(ff, cfg, src, dst):
+    m = (cfg.get("mix") or {}).get("new") or {}
+    af = "alimiter=limit=%sdB:level=false:attack=%s:release=%s" % (
+        m.get("limiter_db", -1.0), m.get("limiter_attack_ms", 0.1), m.get("limiter_release_ms", 50))
+    return [ff, "-y", "-hide_banner", "-loglevel", "error", "-i", src,
+            "-af", af, "-ac", "2", "-c:a", "pcm_s16le", dst]
+
+
 def mp3_cmd(ff, src, dst, bitrate="320k", meta=None):
     cmd = [ff, "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-codec:a", "libmp3lame", "-b:a", str(bitrate)]
     for k, v in (meta or {}).items():

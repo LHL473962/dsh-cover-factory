@@ -2,9 +2,10 @@
 
 这份文档记录踩过坑之后的定论，代码里的参数都能在这里找到理由。改参数前先读。
 
-## 1. 人声/伴奏比例：unity（0 dB + 0 dB）
+## 1. 人声/伴奏比例：old = unity；new = active +3
 
-铁律：分离出来的两条 stem 相加 ≡ 原曲，所以混音时两条都保持 0 dB，不做"把人声拉平到伴奏"。
+**old 预设**（默认 / kim 库）：分离出来的两条 stem 相加 ≡ 原曲，两条都保持 0 dB，不做"把人声拉平到伴奏"。
+**new 预设**（bs317 库）：按活跃帧把「人声=伴奏」对齐，再固定 +3 dB；这是刻意的新标准，不是把 old 的比例改坏。
 
 - 曾经的做法（把人声 RMS 拉到与伴奏相等）会让比例完全走样：人声被抬高 6–10 dB。
 - 判断方法：vocal + instrumental 与原始混音做相关，应接近 1.0000（实测 1.0000）。
@@ -72,3 +73,41 @@ shift 同时作用于人声与伴奏（伴奏用 asetrate + atempo 补偿），�
 - IR：engine/assets/room_ir.wav（约 21 万字节，随仓库分发）
 - 参数默认值：engine/config_default.json 的 mix 段
 - 独立脚本版：engine/assets/mix_unity.sh（与引擎 filter graph 同源）
+
+
+## 自动增益（每首歌单独判断）
+
+不同歌的原始人声/伴奏电平差不一样（Yours 比伴奏低 9.3 dB，Spica 低 4.0 dB），所以**不能固定增益**。
+
+做法：取“人声活跃帧中位电平”（50 ms 窗，剔除 -45 dB 以下静音）与“伴奏活跃帧中位电平”，
+把两者的差对齐到目标值（默认人声比伴奏低 4 dB）：
+
+```
+gain = (instActiveDb + targetDb) - vocalActiveDb
+```
+
+- CLI：`python engine/tools/auto_gain.py --vocal X --inst Y --target-db -4`
+- 手工混音：`manual_mix.py --auto-gain --target-db -4`
+- 网页：每轨“自动增益”按钮 + 总线“人声目标”滑杆
+
+> 引擎 new 预设使用同一套 active 口径，但固定 `targetDb=0`（人声=伴奏）后再 `vocalDb=+3`，即 `ratioActive=+3dB`；
+> old 预设不走 auto-gain，保持 unity 原比例。
+
+
+## 两套混音标准（旧库 / 新库）
+
+| 项 | old（kim 声库） | new（bs317 声库） |
+|---|---|---|
+| 人声基准 | 原曲比例（目标 vocals 对齐） | 活跃帧等响，人声 = 伴奏 |
+| ratio 目标 | unity（ratio_src） | **ratioActive = +3 dB** |
+| 额外人声增益 | 0 dB | **+3 dB**（targetDb=0，vocalDb=+3） |
+| EQ | 260 −1.2 / 9k +1.6 | 120 −2 / 800 −2 / 3k +3 / 9k −2 |
+| 饱和 | 无 | tanh 软削波 threshold **0.5** |
+| 混响 | IR 湿 0.30 | IR 湿 0.10 / 干 0.90 |
+| 加宽 | 人声 1.8 / 伴奏 1.15 | 不加宽 |
+| 总线压缩 | glue 1.3:1 | 关闭（ratio 1.0） |
+| 响度 | 归一化 −14 LUFS | **不归一化**，只 limiter −1dB 保峰值 |
+| qa | −13±1.5 LUFS + 比例 | 不卡响度，只卡峰值 ≤−1 和削波 |
+| 适用 | 旧库（kim 素材训练） | 新库（bs317 素材训练） |
+
+**切换方式**：job 里 `options.mixPreset: "old" | "new"`（显式优先）；不写时读 bank meta 的训练分离器，bs317→new，kim→old。

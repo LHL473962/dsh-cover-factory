@@ -241,6 +241,10 @@ def cmd_init(args):
     if sep_model not in ("kim", "bs317"):
         return fail_json("BAD_SEPARATE_MODEL", "options.separateModel 只能是 kim / bs317，收到：" + str(options.get("separateModel")))
     options["separateModel"] = sep_model
+    if "mixPreset" in options and str(options.get("mixPreset") or "").strip().lower() not in ("old", "new"):
+        return fail_json("BAD_MIX_PRESET", "options.mixPreset 只能是 old / new，收到：" + str(options.get("mixPreset")))
+    if "mixPreset" in options:
+        options["mixPreset"] = str(options["mixPreset"]).strip().lower()
 
     job_id = sanitize_id(config.get("id") or default_job_id(config, workdir))
     prev = None if args.reset else base.read_json(job_path, None)
