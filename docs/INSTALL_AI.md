@@ -321,6 +321,7 @@ $p | ConvertTo-Json -Depth 20 | Out-File -Encoding utf8 "<PROFILE>\package.json"
 ## 训练链说明（AI 必读）
 
 - **不要去找作者要 `dsh_rvc2.py`**：它在仓库里，路径 `engine/vendor/applio/dsh_rvc2.py`，引擎会自动使用。
-- 训练前确认 Applio 环境可导入：`<applio_python> -c "import fairseq, torch; print('ok')"`。
+- 训练前确认 Applio 环境可导入：`<applio_python> -c "import torch; print('ok')"`（训练不需要 fairseq）。
+- 换声前确认旧版 RVC 环境：`<rvc_python> -c "import fairseq; print('ok')"`。
 - 若 `import fairseq` 失败：优先用 Applio 自带安装脚本；否则装 VS Build Tools 后 `pip install fairseq==0.12.2 --no-build-isolation`；或从已装环境复制 `site-packages/fairseq`。
 - 训练很慢（9000 步约 55 分钟 @ RTX 5060 Laptop），先用 300 步验证链路：`steps: 300`，出片可听但音色差，属正常。

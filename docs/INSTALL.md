@@ -248,9 +248,10 @@ engine/vendor/applio/dsh_rvc2.py
 引擎解析顺序：`paths.applio_driver` → `<applio_root>/dsh_rvc2.py` → 仓库自带 vendor 副本。
 所以不需要作者额外发文件；把 Applio 装好、把 `paths.applio_root` 指对即可。
 
-### fairseq 装不上（Windows 常见）
+### fairseq：只有“旧版 RVC 换声”需要
 
-Applio 的特征提取依赖 `fairseq`。Windows + Python 3.10 上没有官方 wheel，三种解法：
+**Applio 训练不需要 fairseq**（它用 transformers 加载 hubert/contentvec）。只有旧版 RVC（convert 阶段）要 `import fairseq`。
+Windows + Python 3.10 上没有官方 wheel，三种解法：
 
 1. **用 Applio 官方安装脚本**（`install.bat`），它自带依赖处理；
 2. **装 VS Build Tools 后源码编译**：`pip install fairseq==0.12.2 --no-build-isolation`；

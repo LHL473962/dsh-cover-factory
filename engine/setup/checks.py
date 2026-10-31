@@ -376,6 +376,42 @@ def check_ytdlp(cfg):
     return {"name": "ytdlp", "ok": False, "found": "yt-dlp 不可用（试过 %d 个 python）" % len(candidates), "path": candidates[0], "hint": hint + "；最后错误：" + last}
 
 
+def check_fairseq(cfg):
+    """训练/换声都依赖 fairseq（Applio 特征提取 + 旧版 RVC）。缺了会在训练/换声时炸，提前查。"""
+    paths = _paths(cfg)
+    # 只有旧版 RVC（换声）需要 fairseq；Applio（训练）用 transformers 加载 hubert，不需要
+    targets = []
+    py = paths.get("rvc_python") or ""
+    if py and py != "python":
+        targets.append(("rvc_python", py))
+    if not targets:
+        return {"name": "fairseq", "ok": False, "optional": True, "found": "未配置 paths.rvc_python",
+                "hint": "先配 paths.rvc_python（旧版 RVC 换声用）"}
+    bad = []
+    good = []
+    for key, py in targets:
+        if not os.path.isfile(py):
+            bad.append(key + "(解释器不存在)")
+            continue
+        try:
+            r = subprocess.run([py, "-c", "import fairseq, sys; print(fairseq.__version__)"],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+            if r.returncode == 0:
+                good.append(key)
+            else:
+                bad.append(key)
+        except Exception:
+            bad.append(key)
+    if not bad:
+        return {"name": "fairseq", "ok": True, "found": "已安装（" + "、".join(good) + "）", "path": "", "hint": ""}
+    return {
+        "name": "fairseq", "ok": False,
+        "found": "缺 fairseq：" + "、".join(bad),
+        "path": "",
+        "hint": "Windows 装 fairseq 三选一：① 用 Applio 自带 install.bat；② 装 VS Build Tools 后 pip install fairseq==0.12.2 --no-build-isolation；③ 从能跑的机器复制 site-packages/fairseq。详见 docs/INSTALL.md",
+    }
+
+
 def run_checks(cfg):
     return [
         check_python(cfg),
@@ -384,6 +420,7 @@ def run_checks(cfg):
         check_ffmpeg(cfg),
         check_msst(cfg),
         check_applio(cfg),
+        check_fairseq(cfg),
         check_old_rvc(cfg),
         check_ytdlp(cfg),
     ]
