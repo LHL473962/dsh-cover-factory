@@ -753,6 +753,11 @@ window.__ModuleLoader__.load({
 
       return h('div', { style: S.wrap },
         healthBar,
+        h('div', { style: S.card },
+          h('div', { style: S.title }, '调音台（文件导入）'),
+          h('div', { style: S.label }, '载入人声/伴奏，10 段均衡 + 增益/声像/饱和/混响 + 总线压缩/限制，可导出 WAV。旧/新调音数值已内置。'),
+          h('button', { style: S.btn, onClick: () => { try { window.open(API + '/mixer', '_blank') } catch (e) {} } }, '打开调音台'),
+        ),
         msg ? h('div', { style: S.msg }, msg) : null,
         settingsCard,
         jobsCard,
