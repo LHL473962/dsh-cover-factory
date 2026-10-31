@@ -88,7 +88,7 @@ select/dataset/train 的素材列表通过 stages/base.songs() 读（job.songs�
 | train | done | ✅ | Applio dsh_rvc2.py prep/train，断点续训 |
 | convert | done | ✅ | 旧版 RVC infer_cli（rmvpe） |
 | mix | done | ✅ | 移植 mix_unity.sh 的滤波链 + 两遍等响/limiter |
-| qa | done | ✅ | preflight / 响度 / 断音率 / 音域覆盖 |
+| qa | done | ✅ | preflight / 响度 / 断音率 / 音域覆盖 + EVAL_LEAK（目标曲是否混进训练集） |
 | export | done | ✅ | libmp3lame 320k + report.md，复制到桌面 |
 
 fetch 的 search 模式已实现（v0.2，见下方“抓取模式”）；import 模式行为不变。

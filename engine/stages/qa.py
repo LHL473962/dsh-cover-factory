@@ -9,6 +9,7 @@
 不合格 -> 报告标红 + 建议（加步数 / 换素材 / 整首移调）。
 """
 
+import hashlib
 import os
 
 from stages import base
@@ -18,6 +19,84 @@ STAGE = "qa"
 
 def _checks(ok_map):
     return dict(ok_map)
+
+
+def _sha1(path):
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _eval_leak(job, tgt, target_vocals, ds_dir):
+    """目标曲原始文件/stem 与 dataset 全部 wav 比 sha1 + size。"""
+    tm = job.get("target_meta") or {}
+    target_name = str(tm.get("title") or tm.get("name") or (os.path.basename(tgt.get("raw") or "") if tgt else "") or "target")
+    candidates = []
+    source = str(job.get("target") or "").strip()
+    if not source and isinstance(tm.get("source"), str):
+        source = tm["source"]
+    if source and base.file_ok(source):
+        candidates.append((source, "source"))
+    if tgt and base.file_ok(tgt.get("raw") or ""):
+        candidates.append((tgt["raw"], "raw"))
+    if base.file_ok(target_vocals):
+        candidates.append((target_vocals, "vocals"))
+    # 去重同路径
+    seen = set()
+    uniq = []
+    for p, k in candidates:
+        key = os.path.normcase(os.path.abspath(p))
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append((p, k))
+    candidates = uniq
+    dataset = []
+    if os.path.isdir(ds_dir):
+        for name in sorted(os.listdir(ds_dir)):
+            if not name.lower().endswith(".wav"):
+                continue
+            p = os.path.join(ds_dir, name)
+            if base.file_ok(p):
+                dataset.append({"path": p, "size": os.path.getsize(p), "sha1": ""})
+    matched = []
+    for tpath, kind in candidates:
+        if not base.file_ok(tpath):
+            continue
+        tsize = os.path.getsize(tpath)
+        tsha = _sha1(tpath)
+        for item in dataset:
+            if item["size"] != tsize:
+                continue
+            if not item["sha1"]:
+                item["sha1"] = _sha1(item["path"])
+            if item["sha1"] == tsha:
+                matched.append({
+                    "target": base.rel(job, tpath),
+                    "targetKind": kind,
+                    "dataset": base.rel(job, item["path"]),
+                    "sha1": tsha,
+                    "size": tsize,
+                })
+    warning = ""
+    if matched:
+        first = matched[0]
+        warning = ("EVAL_LEAK：目标曲 %s 命中了训练集文件 %s（sha1 相同），"
+                   "本次评估结果不能代表音色迁移能力，请换训练集外的歌" % (
+                       target_name, os.path.basename(first["dataset"])))
+    return {
+        "hit": bool(matched),
+        "target": target_name,
+        "targetFiles": [{"path": base.rel(job, p), "kind": k} for p, k in candidates],
+        "datasetDir": base.rel(job, ds_dir) if ds_dir else "",
+        "matched": matched,
+        "warning": warning,
+    }
 
 
 def run(job, cfg):
@@ -39,6 +118,14 @@ def run(job, cfg):
     ds_dir = base.work(job, "dataset", str(job.get("id") or "job"))
     manifest_path = os.path.join(ds_dir, "manifest.json")
     manifest = base.read_json(manifest_path, {}) or {}
+    dataset_sig = []
+    if os.path.isdir(ds_dir):
+        for name in sorted(os.listdir(ds_dir)):
+            if name.lower().endswith(".wav"):
+                fp = os.path.join(ds_dir, name)
+                if base.file_ok(fp):
+                    dataset_sig.append([name, os.path.getsize(fp), int(os.path.getmtime(fp) * 1e9)])
+    leak = _eval_leak(job, tgt, target_vocals, ds_dir)
 
     # 期望声部：options.voice > select 的 expectedVoice > dataset 中位；音域用宽区间
     voice_opt = str(opts.get("voice") or "auto").strip().lower()
@@ -65,8 +152,11 @@ def run(job, cfg):
         "pitchRange": (manifest.get("pitch_range") or {}),
         "expectedVoice": expected_voice,
         "voiceRange": list(voice_range),
+        "datasetSig": dataset_sig,
     }
     inputs = [mix]
+    if tgt and base.file_ok(tgt.get("raw") or ""):
+        inputs.append(tgt["raw"])
     if base.file_ok(target_vocals):
         inputs.append(target_vocals)
     if base.file_ok(manifest_path):
@@ -74,6 +164,15 @@ def run(job, cfg):
 
     if base.recon(job, STAGE, inputs, params, [report_path]):
         rep = base.read_json(report_path, {}) or {}
+        if "evalLeak" not in rep:
+            rep["evalLeak"] = leak
+            rep["warnings"] = (rep.get("warnings") or []) + ([leak["warning"]] if leak.get("hit") else [])
+            base.write_json(report_path, rep)
+            if base.file_ok(md_path):
+                _write_md(md_path, job, rep)
+        if leak.get("hit"):
+            job["warnings"] = list(dict.fromkeys((job.get("warnings") or []) + [leak["warning"]]))
+            base.log("qa: WARNING " + leak["warning"])
         base.log("qa: 报告已存在且输入未变，跳过")
         return base.result(
             "skipped", [base.rel(job, report_path)] + ([base.rel(job, md_path)] if base.file_ok(md_path) else []),
@@ -153,6 +252,11 @@ def run(job, cfg):
         suggestions.append("确认目标曲人声 stem 存在、qa.voice_ranges 配置有效")
 
     ok = all(v is not False for v in checks.values())
+    warnings = []
+    if leak.get("hit"):
+        warnings.append(leak["warning"])
+        job["warnings"] = list(dict.fromkeys((job.get("warnings") or []) + [leak["warning"]]))
+        base.log("qa: WARNING " + leak["warning"])
     metrics = {
         "ok": ok,
         "lufs": lufs,
@@ -167,6 +271,8 @@ def run(job, cfg):
         "expectedRange": [voice_range[0], voice_range[1]],
         "pitchRange": pitch_range,
         "targetMedianF0": target_f0_summary.get("median"),
+        "evalLeakHit": bool(leak.get("hit")),
+        "warnings": warnings,
         "problems": problems,
         "suggestions": suggestions,
     }
@@ -178,6 +284,8 @@ def run(job, cfg):
         "ok": bool(ok),
         "checks": checks,
         "metrics": metrics,
+        "evalLeak": leak,
+        "warnings": warnings,
         "thresholds": {
             "loudnessTarget": target_lufs, "loudnessTol": tol, "peakMaxDb": peak_max,
             "gapPerMin": gap_limit, "minDurationSec": min_dur,
@@ -232,6 +340,15 @@ def _write_md(path, job, report):
         verdict = "通过" if v is True else ("不合格" if v is False else "未测")
         lines.append("| %s | %s | %s |" % (names.get(k, k), values.get(k, ""), verdict))
     lines.extend(["", "合格线：响度 -13 +- 1.5 LUFS；断音率 < 12 次/分；音域覆盖 >= 70%；峰值 <= -0.5 dBFS；stereo 且时长 >= 30s。", ""])
+    leak = report.get("evalLeak") or {}
+    if leak.get("hit"):
+        msg = str(leak.get("warning") or "目标曲命中训练集")
+        if msg.startswith("EVAL_LEAK："):
+            msg = msg[len("EVAL_LEAK："):]
+        lines.append("- **EVAL_LEAK**：" + msg)
+    else:
+        lines.append("- EVAL_LEAK：未命中训练集")
+    lines.append("")
     if report.get("problems"):
         lines.append("## 问题")
         lines.extend(["- " + p for p in report["problems"]])

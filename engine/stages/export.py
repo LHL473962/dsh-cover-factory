@@ -123,6 +123,10 @@ def _report_md(job, cfg, qa, mix_metrics, export_metrics):
         "- Stem 自检：" + str(((job.get("stem_check") or {}).get("verdict") or "未测")) + (
             "（" + "；".join((job.get("stem_check") or {}).get("warnings") or [])[:2] + "）"
             if (job.get("stem_check") or {}).get("warnings") else ""),
+        "- EVAL_LEAK：" + (
+            (lambda s: s[len("EVAL_LEAK："):] if s.startswith("EVAL_LEAK：") else s)(
+                str((qa.get("evalLeak") or {}).get("warning") or "目标曲命中训练集（见 qa/report.json）"))
+            if (qa.get("evalLeak") or {}).get("hit") else "未命中训练集"),
         "- 断音率：%s 次/分（合格线 < 12）" % (qmetrics.get("gapPerMin") if qmetrics.get("gapPerMin") is not None else "未测"),
         "- 音域覆盖：%s（合格线 >= 70%%）" % _pct(qmetrics.get("rangeCoverage")),
         "",
