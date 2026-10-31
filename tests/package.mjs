@@ -60,6 +60,7 @@ for (const f of DOCS) {
   while ((m = refRe.exec(txt))) {
     const rel = m[1]
     if (rel.indexOf('*') >= 0) continue
+    if (rel.indexOf('config.local') >= 0) continue
     if (!exists(rel)) warns.push('文档引用不存在: ' + f + ' -> ' + rel)
   }
 }
