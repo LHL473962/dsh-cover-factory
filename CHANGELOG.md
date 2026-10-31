@@ -26,3 +26,7 @@
 
 ## 0.1.11
 - 基线版本：fetch/separate/select/clean/dataset/train/convert/mix/qa/export 全流程
+
+
+## 版本策略说明
+0.2.0 之后不轻易提升次版本号；**0.3.0 需在“清亮”目标达成后触发**（见 docs/VERSIONING.md）。
