@@ -5,7 +5,9 @@
     APPLIO_ROOT=<Applio 目录> python dsh_rvc2.py train 120
 模型名与数据集走环境变量 SUIS_MODEL / SUIS_DATASET。
 
-依赖：Applio 本体 + 其 requirements（含 fairseq，见 docs/INSTALL.md「fairseq 装不上」）。
+依赖：Applio 本体 + 其 requirements。
+注意：训练（prep/train）不依赖 fairseq（Applio 用 transformers 加载 hubert/contentvec）；
+只有旧版 RVC 换声（engine/stages/convert.py 调 infer_cli）才需要 fairseq。
 """
 import os, sys, glob
 

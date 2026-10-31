@@ -338,3 +338,17 @@ engine/vendor/applio/dsh_rvc2.py
 | 缺 fairseq | 换声阶段 ImportError | setup --install-fairseq --yes |
 | 显存不足 | run 退出码 2 / LOW_VRAM | 关其它 GPU 程序，或减步数 |
 | 网络不通 | 下载权重失败 | 开代理，或手动下模型 |
+
+## fairseq 与 Python 版本（重要）
+
+预编译 fairseq zip 是 **Windows / Python 3.10** 的二进制（cp310）。
+如果 `rvc_python` 是 3.12，那个包**导入会失败**（ABI 不匹配），不能硬装。
+
+正确做法：**两个环境分开**
+
+| 用途 | Python | 依赖 |
+|---|---|---|
+| 训练（Applio） | **3.11+** | transformers（不需要 fairseq） |
+| 换声（旧版 RVC） | **3.10** | 需要 fairseq → 用 `setup --install-fairseq` |
+
+旧版 RVC 用 3.10 建独立 venv 即可；Applio 用 3.11/3.12。
