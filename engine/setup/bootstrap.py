@@ -609,6 +609,50 @@ def _pip_torch(py, cfg, timeout=3600):
     return run_cmd(cmd, timeout=timeout), plan
 
 
+def _python_ver(exe_args):
+    try:
+        rc, out = run_cmd(list(exe_args) + ["-c", "import sys;print('%d.%d' % sys.version_info[:2])"], timeout=60)
+        if rc != 0:
+            return ""
+        return (out.strip().splitlines() or [""])[-1].strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _pick_python_ge(cfg, need=(3, 11), override="", fallback=""):
+    """挑一个 >= need 的 Python：显式 override > fallback > 已配置 applio_python > py -3.12/3.11 > paths.python > 当前解释器。"""
+    paths = cfg.get("paths") or {}
+    cands = []
+    if override:
+        cands.append([override])
+    if fallback:
+        cands.append([fallback])
+    ap = paths.get("applio_python") or ""
+    if ap and os.path.isfile(ap):
+        cands.append([ap])
+    for tag in ("-3.12", "-3.11"):
+        cands.append(["py", tag])
+    if paths.get("python"):
+        cands.append([paths.get("python")])
+    cands.append([sys.executable])
+    for c in cands:
+        try:
+            if c[0] not in ("py",) and not os.path.isfile(c[0]):
+                continue
+        except Exception:  # noqa: BLE001
+            continue
+        ver = _python_ver(c)
+        if not ver:
+            continue
+        try:
+            major, minor = [int(x) for x in ver.split(".")]
+        except Exception:  # noqa: BLE001
+            continue
+        if (major, minor) >= need:
+            return c, ver
+    return None, ""
+
+
 def install_applio_steps(cfg, execute, base_python="", python_override=""):
     """clone Applio（固定 tag）+ venv + torch + requirements + import core 验证。"""
     paths = cfg.get("paths") or {}
@@ -705,8 +749,17 @@ def install_applio_steps(cfg, execute, base_python="", python_override=""):
     if os.path.isfile(py) and _is_venv(venv_dir):
         steps.append(action("applio_venv", "skipped", "venv 已存在", py))
     else:
-        base = python_override or base_python or paths.get("python") or sys.executable
-        base = checks.resolve_python_path({"paths": {"python": base}})
+        picked, pver = _pick_python_ge(cfg, need=(3, 11), override=python_override, fallback=base_python)
+        if not picked:
+            steps.append(action(
+                "applio_venv", "failed",
+                "找不到 Python >=3.11（Applio %s 的 requirements 只支持 3.11+）。当前只有更老的解释器。" % APPLIO_TAG,
+                "",
+                "安装 Python 3.11+ 后重跑：setup --install-applio --python <python311.exe> --yes（RVC 环境仍用 3.10）",
+            ))
+            return steps
+        base = picked[0]
+        log("[applio] 基础解释器：%s（Python %s）" % (base, pver))
         if not os.path.isfile(base):
             steps.append(action("applio_venv", "failed", "找不到基础 Python: " + str(base), "", "传 --python <python.exe>"))
             return steps
