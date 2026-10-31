@@ -3,6 +3,11 @@
 插件只是壳：真正干活的是 `engine/`（Python）和它调用的几套外部环境。
 **依赖不进插件仓库**（原因见最后一节），所以安装分三条路径，装完统一用 `cover_doctor` 验证。
 
+> **两个 Python 环境，别混用**：
+> - **RVC / 换声 = Python 3.10**（`paths.rvc_python`，本机 rvc-env）；
+> - **Applio / 训练 = Python 3.11+**（`paths.applio_python`，本机 D:/Apps/applio-env = 3.11.9）。
+> `setup --install-applio` 会自动按 “--python → paths.applio_python → py -3.11/-3.12 → python” 选 3.11+；只有 3.10 时直接失败并提示下载 https://www.python.org/downloads/release/python-3119/ 。
+
 ## 0. 先体检，再安装
 
 对话里：

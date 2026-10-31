@@ -28,13 +28,13 @@
 ## 尚未完成（v0.2 计划）
 | 项 | 说明 |
 |---|---|
-| 抓取模式 | 引擎按设计只写 FETCH_TODO，不联网；需接 B站/网易云下载器 + copyrightAck 流程 |
-| 声库缓存/复用 | 同一歌手第二次不必重训；目前每次都训 |
+| 抓取模式 | ✅ 已实现（B站搜索 + yt-dlp + copyrightAck）；本行是旧记录，保留仅作历史 |
+| 声库缓存/复用 | ✅ 已实现（work fingerprint + bankDir 命中，见 engine/stages/train.py find_bank_model） |
 | 好球曲自动挑选 | select 已有聚类加权，尚未做成“从歌手全部歌里自动选 3 首” |
 | 和声/混响分离 | MSST 有 dereverb/karaoke 模型，未接入 clean |
 | 批量 | 一次多目标曲 |
 | 报告模板 | 引擎 report 已含关键项，与 preset/report_template.md 的 8 节尚未完全对齐 |
-| 设置页 UI | 只有 JSON API，无图形界面 |
+| 设置页 UI | ✅ 已有图形界面（client.js：体检/新建/任务表/删除/续跑）；本行是旧记录 |
 
 ## 复现命令
 - 引擎单测：`D:/Apps/rvc-env/python.exe engine/run.py init --config engine/examples/job_config.sample.json --workdir engine/examples/sample-work`
@@ -68,3 +68,8 @@
   - 强证据才判反装：`instrumental.perc+0.03 < vocals.perc` **且** `vocals.perc>0.30` **且** `vocals.rms > instrumental.rms-2`；否则只给 `STEM_CHECK_UNCERTAIN` warning（避免把安静伴奏误判成接反——chinokate 实测 0.165/0.041 属正常安静伴奏，已从 fail 降级为 warn）。
 - **混音相位修复**：根因是 `alimiter` 默认 5ms attack 的 lookahead（约 219 采样延迟），不是反相；已把 attack 降到 0.1ms，并加「±300 采样最佳对齐后再判极性」。
 - 测试：smoke 110/110、e2e 24/24、py_compile 全过、doctor 8/8。
+## 2026-10-31 17:00 版本说明
+
+- package.json version 从 0.1.0 起就没再动过，导致别人从 profile 里看到的版本号一直是 0.1.0；
+  实际功能已到 v0.1.11（对应 git tag/提交）。现在已把 version 更新为 0.1.11。
+- 已实现但被旧 STATUS 写成“未完成”的：抓取模式、声库缓存、设置页 UI —— 已在上面改正。

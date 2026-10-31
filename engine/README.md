@@ -306,7 +306,7 @@ Applio 安装会先按显卡装 torch/torchaudio，再把 requirements 里的 to
 
 | 依赖 | 能不能自动装 | 说明 |
 | --- | --- | --- |
-| Python 3.10+（引擎）/ 3.11+（Applio） | 手动 | python.org 安装；Applio 3.7.1 的 numpy 2.4.6 只支持 3.11+，所以 Applio 用 3.11 venv |
+| 两个 Python 环境 | 手动安装解释器 | **RVC/换声 = Python 3.10**；**Applio/训练 = Python 3.11+**（实测 3.11.9）。安装器自动按 --python → paths.applio_python → py -3.11/-3.12 → python 选 3.11+；只有 3.10 时立即失败并给下载链接 |
 | torch + CUDA | 自动（--install 链 / setup --install-torch） | 按显卡 capability 自动选 cu128/cu121/cu118；--yes 真装，约 2.5–3G |
 | ffmpeg | 自动（pip imageio-ffmpeg）或手动 | bootstrap 装完会给出可执行文件路径，把它写进 paths.ffmpeg；失败则从 https://www.gyan.dev/ffmpeg/builds/ 下载 |
 | yt-dlp | 自动（pip，在 paths.ytdlp_python 环境里） | 只有 fetch search 抓取模式需要；import 模式不联网 |
@@ -321,7 +321,7 @@ Applio 安装会先按显卡装 torch/torchaudio，再把 requirements 里的 to
 
 ### 已知问题 / 实测失败点
 
-- **Applio 3.7.1 需要 Python 3.11+**：用 Python 3.10 建 venv 会在版本门直接失败（requirements 的 numpy 2.4.6 仅支持 3.11+）。请用 --python <3.11解释器>；本机已有 D:/Apps/applio-env 是 3.11.9，可作参考。
+- **两个环境别混用**：RVC/换声固定 Python 3.10（本机 rvc-env）；Applio/训练固定 Python 3.11+（本机 D:/Apps/applio-env = 3.11.9）。安装器会自动选 3.11+；若只有 3.10 会在 clone 前直接失败并提示下载 https://www.python.org/downloads/release/python-3119/ 。
 - **github.com:443 间歇被墙**：Applio 的 git clone 失败时会自动回退到 codeload.github.com 的固定 tag zip；如果两者都不通，只能配代理/镜像后重试。
 - **实测（2026-10-31，临时 D:/VoiceData/exp/applio_test + Python 3.10）**：git clone 被墙后 codeload 回退成功（repo 26MB / 225 文件），venv 3.10 创建成功；**33 秒 / 47MB** 时在版本门失败（Applio 3.7.1 需要 Python>=3.11）。改用 3.11 才会进入 torch + requirements 阶段（约 3–5G / 20–40 分钟）。
 
