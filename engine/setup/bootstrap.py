@@ -9,7 +9,7 @@
     python engine/setup/bootstrap.py --install-applio [--python <exe>] [--yes]
     python engine/setup/bootstrap.py --install-fairseq [--yes]
 
---install 链：torch -> Applio -> 旧版 RVC -> fairseq -> MSST/权重 -> yt-dlp/ffmpeg。
+--install 链：torch -> Applio -> 旧版 RVC -> RVC 运行依赖 -> fairseq -> MSST/权重 -> yt-dlp/ffmpeg。
 --install-applio：固定 Applio 3.7.1（git 失败回退 codeload zip）-> venv -> torch -> requirements -> import core。
 --install-fairseq：预编译 fairseq 0.12.2 zip（sha256 校验）解到 paths.rvc_python 的 site-packages。
 每步写 engine/setup/setup.log；单步失败不中断后续；最后输出 JSON 汇总（stdout 只有 JSON，进度走 stderr）。
@@ -503,6 +503,83 @@ def _next_steps(steps):
     return out
 
 
+RVC_DEPS_MODULES = {
+    "numpy": "numpy", "scipy": "scipy", "librosa": "librosa", "numba": "numba",
+    "llvmlite": "llvmlite", "faiss": "faiss-cpu", "pyworld": "pyworld",
+    "parselmouth": "praat-parselmouth", "soundfile": "soundfile",
+    "ffmpeg": "ffmpeg-python", "tqdm": "tqdm", "matplotlib": "matplotlib",
+    "torchcrepe": "torchcrepe", "av": "av",
+}
+
+
+def _rvc_deps_state(py, packages):
+    """返回 (ok, missing, versions)。按 import + importlib.metadata 版本校验。"""
+    code = (
+        "import json,importlib.metadata as m;"
+        "mods=" + repr(RVC_DEPS_MODULES) + ";"
+        "out={};"
+        "\nfor mod,pkg in mods.items():\n"
+        "    try:\n"
+        "        __import__(mod); out[mod]=m.version(pkg)\n"
+        "    except Exception as e:\n"
+        "        out[mod]='MISSING:'+type(e).__name__\n"
+        "print('RD='+json.dumps(out))"
+    )
+    rc, out = run_cmd([py, "-c", code], timeout=180)
+    data = None
+    for line in out.splitlines():
+        if line.strip().startswith("RD="):
+            try:
+                data = json.loads(line.strip()[3:])
+            except ValueError:
+                data = None
+    if data is None:
+        return False, ["import 检查失败: " + (out.strip().splitlines() or ["?"])[-1][:200]], {}
+    expected = {}
+    for spec in packages:
+        parts = str(spec).split("==", 1)
+        if len(parts) == 2:
+            expected[parts[0].strip().lower()] = parts[1].strip()
+    missing = []
+    for mod, pkg in RVC_DEPS_MODULES.items():
+        got = data.get(mod)
+        want = expected.get(pkg.lower())
+        if not got or str(got).startswith("MISSING"):
+            missing.append("%s(%s)" % (mod, pkg))
+        elif want and str(got) != want:
+            missing.append("%s %s != %s" % (mod, got, want))
+    return (not missing), missing, data
+
+
+def install_rvc_deps(cfg, execute):
+    paths = cfg.get("paths") or {}
+    py = paths.get("rvc_python") or ""
+    if not py or not os.path.isfile(py):
+        return action("rvc_deps", "failed", "paths.rvc_python 不可用: " + str(py), str(py),
+                      "先配 paths.rvc_python（旧版 RVC 的 Python 3.10）")
+    packages = list((cfg.get("rvc_deps") or {}).get("packages") or [])
+    if not packages:
+        return action("rvc_deps", "failed", "rvc_deps.packages 为空", py)
+    ok, missing, _versions = _rvc_deps_state(py, packages)
+    if ok:
+        return action("rvc_deps", "skipped", "RVC 运行依赖已齐全", py)
+    if not execute:
+        return action("rvc_deps", "skipped",
+                      "dry-run：加 --yes 安装 " + " ".join(packages), py)
+    log("[rvc_deps] python=%s 安装 %d 个包（跳过 torch/torchaudio）" % (py, len(packages)))
+    cmd = [py, "-m", "pip", "install", "--disable-pip-version-check",
+           "--retries", "10", "--timeout", "120"] + packages
+    rc, out = run_cmd(cmd, timeout=float((cfg.get("rvc_deps") or {}).get("timeout_sec", 1800)))
+    if rc != 0:
+        return action("rvc_deps", "failed", "pip install 失败（exit=%s）：%s" % (rc, out[-500:]), py,
+                      "手动：%s -m pip install %s" % (py, " ".join(packages)))
+    ok2, missing2, _ = _rvc_deps_state(py, packages)
+    if not ok2:
+        return action("rvc_deps", "failed", "安装后仍缺/版本不符：" + "、".join(missing2[:8]), py,
+                      "手动：%s -m pip install %s" % (py, " ".join(packages)))
+    return action("rvc_deps", "done", "RVC 运行依赖安装完成", py)
+
+
 FAIRSEQ_DEFAULT_URL = ("https://github.com/LHL473962/dsh-cover-factory/releases/download/"
                        "v0.1.11/fairseq-0.12.2-win-py310.zip")
 FAIRSEQ_DEFAULT_SHA = "8ba5a4af1354f69aa383ec12067f2b01d5f374bdceb7e0b78a900d033cf5b368"
@@ -628,7 +705,7 @@ def _pip_torch(py, cfg, timeout=3600):
     cmd = [py, "-m", "pip", "install", "--disable-pip-version-check",
            "--retries", "10", "--timeout", "120", "torch", "torchaudio"]
     if plan.get("index"):
-        cmd += ["--index-url", plan["index"]]
+        cmd += ["--index-url", plan["index"], "--extra-index-url", "https://pypi.org/simple"]
     log("[applio] torch：%s（%s）" % (" ".join(cmd), plan.get("torch") or "cpu"))
     rc, out = run_cmd(cmd, timeout=timeout)
     return {"returncode": rc, "tail": out}, plan
@@ -911,6 +988,8 @@ def main(argv=None):
     parser.add_argument("--with-models", dest="with_models", action="store_true",
                         help="下载 MSST 代码 + MelBand kim + hubert/rmvpe（默认 dry-run，--yes 才下载）")
     parser.add_argument("--install-torch", action="store_true", help="按显卡 capability 安装对应 torch（默认 dry-run）")
+    parser.add_argument("--install-rvc-deps", dest="install_rvc_deps", action="store_true",
+                        help="安装旧版 RVC 的 numpy/librosa/faiss 等运行依赖（默认 dry-run）")
     parser.add_argument("--install-fairseq", dest="install_fairseq", action="store_true",
                         help="安装预编译 fairseq 0.12.2 到 paths.rvc_python（默认 dry-run）")
     parser.add_argument("--install-applio", dest="install_applio", action="store_true",
@@ -933,6 +1012,14 @@ def main(argv=None):
         payload, code = install_torch_mode(cfg, args)
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return code
+
+    if args.install_rvc_deps:
+        step = install_rvc_deps(cfg, bool(args.yes))
+        steps = [_normalize_step(step)]
+        payload = {"ok": all(s["status"] != "failed" for s in steps), "steps": steps,
+                   "nextSteps": _next_steps(steps)}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ok"] else 1
 
     if args.install_fairseq:
         steps = [_normalize_step(s) for s in install_fairseq(cfg, bool(args.yes))]
@@ -958,6 +1045,7 @@ def main(argv=None):
             chain.append(lambda: install_applio_steps(cfg, bool(args.yes), base_python=args.python,
                                                      python_override=args.python))
             chain.append(lambda: [install_old_rvc(cfg)])
+            chain.append(lambda: [install_rvc_deps(cfg, bool(args.yes))])
             chain.append(lambda: install_fairseq(cfg, bool(args.yes)))
             chain.append(lambda: [install_msst(cfg)])
             chain.append(lambda: [install_ytdlp(cfg)])

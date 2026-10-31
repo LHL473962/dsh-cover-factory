@@ -436,11 +436,18 @@ def check_old_rvc(cfg):
         missing.append("rmvpe.pt")
     if not _is_file(python):
         missing.append("rvc python")
+    runtime_error = ""
+    if _is_file(python):
+        rc, out = _run([python, "-c", "import numpy,librosa,faiss,pyworld,parselmouth;print('ok')"], timeout=180)
+        if rc != 0:
+            runtime_error = (out.strip().splitlines() or ["import 失败"])[-1][:200]
+            missing.append("运行依赖（numpy/librosa/faiss/pyworld/parselmouth）")
     ok = not missing
     hint = ("git clone https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI && "
             "git checkout 2.2.231006；把 hubert_base.pt / rmvpe.pt 放到 assets/hubert、assets/rmvpe"
-            "（可从本机 rvc-models 复制，见 paths.rvc_models_src）；paths.rvc_root / rvc_python 指过去")
-    found = "旧版 RVC 2.2.231006 + hubert/rmvpe" if ok else ("缺: " + "、".join(missing))
+            "（可从本机 rvc-models 复制，见 paths.rvc_models_src）；paths.rvc_root / rvc_python 指过去；"
+            "缺运行依赖跑 setup --install-rvc-deps --yes" + ("；错误：" + runtime_error if runtime_error else ""))
+    found = ("旧版 RVC 2.2.231006 + hubert/rmvpe + 运行依赖 ok" if ok else ("缺: " + "、".join(missing)))
     return {"name": "old_rvc", "ok": ok, "found": found, "path": root, "hint": "" if ok else hint}
 
 

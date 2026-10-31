@@ -258,13 +258,14 @@ $p | ConvertTo-Json -Depth 20 | Out-File -Encoding utf8 "<PROFILE>\package.json"
 ```powershell
 # A1 依赖体检（先看缺什么）
 & $PY "$PLUGIN_DIR\engine\run.py" doctor
-# A2 一键链：torch -> Applio -> 旧版 RVC -> fairseq -> MSST/权重 -> yt-dlp/ffmpeg
+# A2 一键链：torch -> Applio -> 旧版 RVC -> RVC 运行依赖 -> fairseq -> MSST/权重 -> yt-dlp/ffmpeg
 & $PY "$PLUGIN_DIR\engine\run.py" setup --install --with-models --yes
 # A3 单装 torch（先 dry-run 看命令）
 & $PY "$PLUGIN_DIR\engine\run.py" setup --install-torch --dry-run
 & $PY "$PLUGIN_DIR\engine\run.py" setup --install-torch --yes
-# A4 Applio（需要 Python 3.11+）/ fairseq（旧版 RVC）
+# A4 Applio（需要 Python 3.11+）/ RVC 运行依赖 / fairseq（旧版 RVC）
 & $PY "$PLUGIN_DIR\engine\run.py" setup --install-applio --python <Python 3.11> --yes
+& $PY "$PLUGIN_DIR\engine\run.py" setup --install-rvc-deps --yes
 & $PY "$PLUGIN_DIR\engine\run.py" setup --install-fairseq --yes
 # A5 复查
 & $PY "$PLUGIN_DIR\engine\run.py" doctor

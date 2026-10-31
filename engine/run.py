@@ -1029,6 +1029,8 @@ def cmd_setup(args):
         argv.append("--install")
     else:
         argv.append("--check")
+    if getattr(args, "install_rvc_deps", False):
+        argv.append("--install-rvc-deps")
     if getattr(args, "install_fairseq", False):
         argv.append("--install-fairseq")
     if getattr(args, "install_applio", False):
@@ -1104,6 +1106,8 @@ def main(argv=None):
                          help="下载 MSST 代码 + MelBand kim + hubert/rmvpe（默认 dry-run，--yes 才下载）")
     p_setup.add_argument("--install-torch", dest="install_torch", action="store_true",
                          help="按显卡 capability 安装对应 torch（默认 dry-run）")
+    p_setup.add_argument("--install-rvc-deps", dest="install_rvc_deps", action="store_true",
+                         help="安装旧版 RVC 运行依赖 numpy/librosa/faiss/pyworld/parselmouth 等（默认 dry-run）")
     p_setup.add_argument("--install-fairseq", dest="install_fairseq", action="store_true",
                          help="安装预编译 fairseq 0.12.2 到 paths.rvc_python（默认 dry-run）")
     p_setup.add_argument("--install-applio", dest="install_applio", action="store_true",

@@ -315,9 +315,12 @@ doctor 的 `gpu_torch_match` 会带 `suggestedTorch`（按 capability 自动选�
     python engine/setup/bootstrap.py --check
     python engine/setup/bootstrap.py --install --with-models --yes
 
+`--install` 链顺序：torch → Applio → 旧版 RVC → RVC 运行依赖 → fairseq → MSST/权重 → yt-dlp/ffmpeg。
+
 单装某一项：
 
     python engine/run.py setup --install-applio --python <Python 3.11> --yes   # Applio 训练器（实测 8.1G / 约 11 分钟）
+    python engine/run.py setup --install-rvc-deps --yes                      # 旧版 RVC 换声运行依赖（numpy/librosa/faiss 等）
     python engine/run.py setup --install-fairseq --yes                       # 旧版 RVC 换声要的 fairseq 0.12.2
     python engine/run.py setup --install-torch --yes                         # 按显卡选 cu 版本
 
@@ -333,8 +336,31 @@ Applio 安装会先按显卡装 torch/torchaudio，再把 requirements 里的 to
 | Applio | ✅ setup --install-applio --yes | clone 固定 tag 3.7.1（git 失败时回退 codeload zip）→ venv → torch（按显卡）→ requirements → import core 验证；需要 Python 3.11+；**实测 8.1G / 676 秒**（网络快），建议预留 10G |
 | fairseq 0.12.2（旧版 RVC） | ✅ setup --install-fairseq --yes | 预编译 zip（MIT，11.4MB，sha256 校验）解压到 paths.rvc_python 的 site-packages，再装 omegaconf/hydra/sacrebleu 等 |
 | 旧版 RVC 2.2.231006 | 自动 clone + 打补丁 + 拷本机权重 | clone 后自动应用 `engine/vendor/rvc_patches`（torch>=2.6/PyAV/index 空兼容，备份 .orig）；`hubert_base.pt`/`rmvpe.pt` 从 `paths.rvc_models_src` 递归复制 |
+| RVC 运行依赖 | ✅ setup --install-rvc-deps --yes | 装到 paths.rvc_python（跳过 torch/torchaudio）：numpy/librosa/faiss/pyworld/parselmouth 等，版本锁定见下 |
 | 声库权重 / 分离权重 / 预训练底模 | 一律不自动下载 | 许可各异、体积大 |
 
+### RVC 运行依赖版本（setup --install-rvc-deps）
+
+参照本机 rvc-env（Python 3.10）实测版本锁定，避免装到不兼容新版：
+
+| 包 | 版本 | 备注 |
+| --- | --- | --- |
+| numpy | 2.1.2 | numba/librosa ABI |
+| scipy | 1.15.3 | |
+| librosa | 0.11.0 | |
+| numba / llvmlite | 0.61.2 / 0.44.0 | |
+| faiss-cpu | 1.15.1 | |
+| pyworld | 0.3.5 | |
+| praat-parselmouth | 0.4.7 | import 名 parselmouth |
+| soundfile | 0.13.1 | |
+| ffmpeg-python | 0.2.0 | import 名 ffmpeg |
+| tqdm / matplotlib | 4.67.1 / 3.10.6 | |
+| torchcrepe | 0.0.24 | |
+| av | 17.1.0 | 新 PyAV；补丁已兼容 |
+
+torch/torchaudio 不装（由 `--install-torch` / Applio venv 负责）；fairseq 单独 step。
+
+**实测**（Python 3.10 临时 venv + 已有 torch 2.8.0+cu128）：pip 安装 14 个包 **87 秒 / 687MB**，`import numpy,librosa,faiss,pyworld,parselmouth,ffmpeg,torchcrepe,av` 全过；重复执行 step 走 skipped。
 **为什么不能打包整个环境**：torch/CUDA 必须按显卡与驱动选版本；MSST/RVC/Applio 的模型许可各不相同；整套依赖 5–10G。
 所以引擎做“体检 + pip/git 小件自动装 + 大权重按需下载”，不把环境塞进仓库。
 

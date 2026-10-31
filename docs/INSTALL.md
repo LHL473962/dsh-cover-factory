@@ -68,6 +68,7 @@
 | yt-dlp | ✅ | `pip install -U yt-dlp`（抓取模式才用） |
 | ffmpeg | ✅ | `pip install imageio-ffmpeg`，并把路径写回配置 |
 | 旧版 RVC | ✅ | `git clone --depth 1 --branch <tag>` → 自动应用 `engine/vendor/rvc_patches`（torch>=2.6/PyAV/index 空兼容，备份 .orig）→ 复制本机权重 |
+| RVC 运行依赖 | ✅（`--install-rvc-deps`） | 装到 paths.rvc_python（跳过 torch/torchaudio）：numpy/librosa/faiss/pyworld/parselmouth 等，版本按本机 rvc-env 锁定 |
 | MSST 代码 + kim 权重 | ✅（--with-models） | clone 到 paths.msst_root；已有跳过；kim 约 871MB，断点续传/失败不中断 |
 | Applio | ✅（--install-applio 或 --install 链） | 固定 tag 3.7.1；git clone 失败回退 codeload zip；venv + torch + requirements；**需要 Python 3.11+**；实测 8.1G/676 秒，预留 10G |
 | fairseq 0.12.2 | ✅（--install-fairseq 或 --install 链） | 预编译 zip + sha256；装到 paths.rvc_python 的 site-packages |
@@ -75,7 +76,7 @@
 | PyTorch + CUDA 轮子 | ✅（--install 链 / `--install-torch`） | 按显卡 capability 自动选 cu128/cu121/cu118；`--yes` 真装 |
 | `room_ir.wav` | ❌ | 自备 IR |
 
-所以「全自动」覆盖：torch（按显卡选 cu 版本）/ Applio / 旧版 RVC / fairseq / MSST 代码 / MelBand kim / hubert / rmvpe / yt-dlp / ffmpeg；
+所以「全自动」覆盖：torch（按显卡选 cu 版本）/ Applio / 旧版 RVC / RVC 运行依赖 / fairseq / MSST 代码 / MelBand kim / hubert / rmvpe / yt-dlp / ffmpeg；
 只需要自备 Python 3.11（Applio）与 `room_ir.wav`（可选混响 IR）。
 **需要**：≥15G 空闲磁盘、能访问 PyPI / GitHub / HuggingFace（或配镜像）。
 AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_AI.md），它会自动找 profile、幂等注册插件并跑上面这条。
@@ -109,6 +110,7 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 | fairseq 0.12.2 | （old_rvc 检查） | 旧版 RVC 换声特征提取 | ~12M | MIT | ✅ `setup --install-fairseq --yes`（预编译包） |
 | MSST（MelBand-RoFormer） | `msst` | 人声/伴奏分离 | 代码 ~100M + kim 权重 ~1G | 代码 MIT；权重按模型页条款 | ⚠️ 代码可 clone，**权重自取** |
 | 旧版 RVC（`infer_cli`） | `old_rvc` | 换声推理（rmvpe/pitch） | ~200M | MIT | ✅ bootstrap 会 clone 并自动打兼容补丁 |
+| RVC 运行依赖 | `old_rvc` 运行时检查 | numpy/librosa/faiss/pyworld/parselmouth 等 | ~250M | 各上游 | ✅ `setup --install-rvc-deps --yes` |
 | ffmpeg | `ffmpeg` | 混音、转 mp3、探测时长/响度 | 80–150M（imageio 自带 ~30M） | LGPL/GPL（构建而定） | ✅ bootstrap 会装 |
 | rmvpe / hubert-base / f0G40k 底模 | （`old_rvc` 检查里） | 音高、内容特征、声码器 | 60M + 360M + 200M | MIT / 上游条款 | 随 RVC 权重复制 |
 | `room_ir.wav` | — | 卷积混响 IR（混音链） | <1M | 自备/免费 IR | ❌ 自备 |
@@ -277,6 +279,7 @@ engine/vendor/applio/dsh_rvc2.py
 
 **首选（自动）**：
 
+    python engine/run.py setup --install-rvc-deps --yes   # numpy/librosa/faiss/pyworld/parselmouth 等（不装 torch）
     python engine/run.py setup --install-fairseq --yes
 
 - 预编译 Windows/py310 包（MIT，11.4MB，配置在 `paths.fairseq_zip_url/fairseq_zip_sha256`）；
