@@ -66,6 +66,7 @@
 | 扫描哪些本机客户端 | 勾选框组（**仅 local 显示**，默认全选） | 网易云 / QQ音乐 / 酷狗 / 酷我 → `clients: ["netease","qqmusic","kugou","kuwo"]`（`"qq"` 也认）；非法值由服务端 `BAD_CLIENT` 拦 |
 | 关键词 | 输入框（**仅 local 显示**） | 默认=歌手名（留空即用 `singer`），按关键词匹配已下载歌曲名/文件名 → `keyword` |
 | 目标歌手声部 | 下拉：自动 / 女声 / 男声（默认自动） | 提交时 `voice: auto\|female\|male` → `job_config.options.voice`。下方小字：「自动按目标曲人声判断；若素材被大量排除，请手动指定」。**男歌手建议直接选男声**，别让 auto 把男声素材误判成对唱 |
+| 分离方案 | 下拉：kim（默认，推荐）/ bs317（串音更低，实验无听感提升） | 提交 `separateModel: kim\|bs317` → `job_config.options.separateModel`。下方小字：kim 最稳；bs317（BS-RoFormer ep317）串音指标更低，但**实验结论是没有可测的听感提升** |
 | 素材目录 | 输入框（**仅勾选「本地目录」时显示**） | 素材文件夹，插件只读不删；勾了「本地目录」就必须填，否则 `MISSING_FOLDER` |
 | 目标曲路径 | 输入框 | 目标曲音频完整路径；不填只能训到 train |
 | 训练步数 | 下拉 5000 / 9000 / 18000 | 与设置里的默认值独立；耗时文案同上（30 分钟 / 55 分钟 / 1 小时 50 分，RTX 5060 Laptop 实测），下拉旁固定提示「没有可用 GPU 会走 CPU，慢约 10 倍」 |
@@ -125,3 +126,8 @@ local 模式下卡片会多一行小字：**「会自动扫描常见下载目录
 - 删除只做软删（移到 `_deleted/`）；物理清理由对话侧 `cover_delete(mode:"purge")` 或手动删目录。
 - `_deleted/` 里的东西不会出现在任务表（`listJobs` 跳过 `_` 开头的目录），要找回就把它移回 `jobs/`。
 - 设置页半端只读 `settings.section`，不提供独立路由页面。
+
+
+## 状态卡 · stem 检测
+
+`cover_status` 会把引擎的 `stemCheck`（人声/伴奏是否正常、是否反相）和 `polarityFixed`（引擎是否已自动修极性）原样透出；插件不自己算。`stemCheck` 为 `null`（还没跑 separate）时不要下结论。

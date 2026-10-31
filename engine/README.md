@@ -81,7 +81,7 @@ select/dataset/train 的素材列表通过 stages/base.songs() 读（job.songs�
 | stage | 实现 | 真实可跑 | 说明 |
 | --- | --- | --- | --- |
 | fetch | done | ✅ import + search | import 只复制/转码用户文件夹；search 走 B 站搜索 + yt-dlp（需 --copyright-ack） |
-| separate | done | ✅ | MSST mel_band_roformer + kim 权重 |
+| separate | done | ✅ | MSST kim / bs317 可选 + stem 自检（HPSS） |
 | select | done | ✅ | 双峰对唱判断、按 expected 声部排除、现场降权、音色聚类加权 |
 | clean | done | ✅ | 高通 45Hz + 掐头去尾静音 |
 | dataset | done | ✅ | 训练集目录 + manifest（音域 p5/p95） |
@@ -92,6 +92,34 @@ select/dataset/train 的素材列表通过 stages/base.songs() 读（job.songs�
 | export | done | ✅ | libmp3lame 320k + report.md，复制到桌面 |
 
 fetch 的 search 模式已实现（v0.2，见下方“抓取模式”）；import 模式行为不变。
+
+## 分离方案与 stem 自检
+
+`options.separateModel`：
+
+| 值 | 模型 | 说明 |
+| --- | --- | --- |
+| `kim`（默认） | mel_band_roformer + MelBandRoformer_kim.ckpt | 人声自然、稳；部分曲目鼓/打击可能少量串到人声 |
+| `bs317` | bs_roformer + model_bs_roformer_ep_317_sdr_12.9755 | 鼓/贝斯分离更干净，人声较少混入伴奏；算力略高 |
+
+路径：`paths.msst_config/msst_checkpoint`（kim）、`paths.bs317_config/bs317_checkpoint`（bs317）。
+job.json 的 `separate_model` 记录实际模型；换模型会因 separate 参数变化自动重跑。
+
+分离完成后对每条 stem 做 HPSS 自检（60s 中段，librosa 功率谱打击/谐波比 + RMS）：
+
+- `vocals.perc < 0.28` 且 `instrumental.perc > vocals.perc + 0.08` → ok；
+- `vocals.perc > 0.30` → warning `VOCAL_STEM_HAS_DRUMS`（人声里有鼓，换声会把乐器唱成人声）；
+- `instrumental.perc + 0.03 < vocals.perc`（留 0.03 抖动余量）→ `STEMS_SWAPPED`，**separate 直接 failed**，不再训练；
+- vocals RMS 比 instrumental 还响 → warning `VOCAL_STEM_LOUD`（通常人声低 5–15dB）。
+
+结果写 `work/sep/stem_check.json`，job.json 记 `stem_check`（report/verdict/warnings/songs），成品 report.md 显示；
+阈值在 `separate.stem_check` 可调。
+
+### 混音极性
+
+`alimiter` 的 attack 是 lookahead：默认 5ms 会让输出整体延迟约 219 samples，导致“成品 vs 伴奏”0 延迟相关假性为负。
+引擎默认 `mix.limiter_attack_ms=0.1`（延迟约 3 samples），并在 mix 末尾按 ±`polarity_max_lag` 最佳对齐判断极性；
+只有对齐后的相关仍为负才整体乘 -1，metrics/report 记 `polarityFixed`、`polarityCorr0`、`polarityCorr`、`polarityLag`。
 
 ## 幂等与断点
 

@@ -237,6 +237,10 @@ def cmd_init(args):
     if voice not in ("auto", "female", "male"):
         return fail_json("BAD_VOICE", "options.voice 只能是 auto / female / male，收到：" + str(options.get("voice")))
     options["voice"] = voice
+    sep_model = str(options.get("separateModel") or "kim").strip().lower()
+    if sep_model not in ("kim", "bs317"):
+        return fail_json("BAD_SEPARATE_MODEL", "options.separateModel 只能是 kim / bs317，收到：" + str(options.get("separateModel")))
+    options["separateModel"] = sep_model
 
     job_id = sanitize_id(config.get("id") or default_job_id(config, workdir))
     prev = None if args.reset else base.read_json(job_path, None)

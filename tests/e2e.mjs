@@ -398,6 +398,45 @@ await step('mode=local：config.sources 写 {local_clients:true, clients, keywor
   await call('cover_delete', { jobId: r2.jobId, mode: 'purge' })
 })
 
+await step('separateModel：默认 kim 写进 options，bs317 也合法', async () => {
+  const r = await call('cover_setup', { singer: '测试', sources: ['folder'], folder: MAT, steps: 5000 })
+  assert.equal(r.ok, true, JSON.stringify(r).slice(0, 400))
+  const cfg = JSON.parse(readFileSync(r.config, 'utf8'))
+  assert.equal(cfg.options.separateModel, 'kim', '默认 kim')
+  assert.equal(r.separateModel, 'kim')
+
+  const r2 = await call('cover_setup', { singer: '测试', sources: ['folder'], folder: MAT, steps: 5000, separateModel: 'bs317' })
+  assert.equal(r2.ok, true, JSON.stringify(r2).slice(0, 400))
+  const cfg2 = JSON.parse(readFileSync(r2.config, 'utf8'))
+  assert.equal(cfg2.options.separateModel, 'bs317')
+  assert.equal(r2.separateModel, 'bs317')
+
+  await call('cover_delete', { jobId: r.jobId, mode: 'purge' })
+  await call('cover_delete', { jobId: r2.jobId, mode: 'purge' })
+})
+
+await step('cover_status：透出引擎的 stemCheck / polarityFixed', async () => {
+  const r = await call('cover_setup', { singer: '测试', sources: ['folder'], folder: MAT, steps: 300 })
+  assert.equal(r.ok, true, JSON.stringify(r).slice(0, 400))
+  const job = JSON.parse(readFileSync(r.jobFile, 'utf8'))
+  job.stemCheck = {
+    ok: false,
+    vocal: { rms: 0.12, present: true },
+    instrumental: { rms: 0.9, present: true },
+    inverted: true,
+    warnings: ['人声轨偏小'],
+  }
+  job.polarityFixed = true
+  writeFileSync(r.jobFile, JSON.stringify(job, null, 2))
+  const st = await call('cover_status', { jobId: r.jobId })
+  assert.equal(st.ok, true, JSON.stringify(st).slice(0, 400))
+  assert.equal(st.polarityFixed, true, '极性修复要透出')
+  assert.ok(st.stemCheck && st.stemCheck.ok === false, 'stemCheck 要透出：' + JSON.stringify(st.stemCheck))
+  assert.equal(st.stemCheck.vocal.rms, 0.12)
+  assert.deepEqual(st.stemCheck.warnings, ['人声轨偏小'])
+  await call('cover_delete', { jobId: r.jobId, mode: 'purge' })
+})
+
 await step('多来源：["folder","local"] 落盘组合 + 预筛 contributions，singer 归一 suis', async () => {
   const src = join(ROOT, 'multi-src')
   mkdirSync(src, { recursive: true })

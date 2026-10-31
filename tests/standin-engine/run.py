@@ -108,7 +108,8 @@ if cmd == 'init':
     sys.exit(0)
 
 if cmd == 'status':
-    print(json.dumps(load(opt('--job')), ensure_ascii=False))
+    # ensure_ascii=True：Windows 控制台是 cp936，中文直接输出会被插件按 UTF-8 解成乱码
+    print(json.dumps(load(opt('--job')), ensure_ascii=True))
     sys.exit(0)
 
 if cmd == 'cancel':

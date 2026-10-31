@@ -351,6 +351,22 @@ await check('preview contributions：读引擎组合报告 work/raw/fetch_report
   }
 })
 
+await check('separateModel：默认 kim、bs317 合法、非法 -> BAD_SEPARATE_MODEL', async () => {
+  const c = buildJobConfig({ singer: '测试', sources: ['folder'], folder: 'F', steps: 5000 })
+  assert.equal(c.options.separateModel, 'kim', '默认 kim 要写进 options')
+  assert.equal(buildJobConfig({ singer: 'x', sources: ['folder'], folder: 'F', separateModel: 'bs317' }).options.separateModel, 'bs317')
+  assert.equal(buildJobConfig({ singer: 'x', sources: ['folder'], folder: 'F', separateModel: 'BS-317' }).options.separateModel, 'bs317', '别名要归一')
+  assert.equal(buildJobConfig({ singer: 'x', sources: ['folder'], folder: 'F', separateModel: 'yolo' }).options.separateModel, 'kim', '配置层非法值回落 kim')
+
+  const ok = await call('cover_setup', { singer: '测试', sources: ['local'], separateModel: 'bs317' })
+  assert.equal(ok.error, 'ENGINE_NOT_READY', 'bs317 合法，只是引擎没就绪：' + JSON.stringify(ok))
+  const bad = await call('cover_setup', { singer: '测试', separateModel: 'yolo' })
+  assert.equal(bad.error, 'BAD_SEPARATE_MODEL', JSON.stringify(bad))
+  assert.deepEqual(bad.allowed, ['kim', 'bs317'])
+  const schema = byName('cover_setup').parameters.properties
+  assert.deepEqual(schema.separateModel.enum, ['kim', 'bs317'])
+})
+
 await check('refSearch：默认 false，job 配置里不出现 refSearch', () => {
   const c = buildJobConfig({ singer: '测试', mode: 'import', folder: 'F', refs: ['歌名'], steps: 9000 })
   assert.equal(c.options.refSearch, undefined, '默认不该写 refSearch')

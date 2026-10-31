@@ -9,10 +9,61 @@ IR 1.2s 湿 30% 返回加宽 1.8x；伴奏 0dB + 2.8k 让位 -1 + 加宽 1.15x�
 
 import os
 
+import numpy as np
+
 from assets import audio, commands
 from stages import base
 
 STAGE = "mix"
+
+
+def _decode_mono(ff, path, sr=44100):
+    x = audio.decode(ff, path, sr, 2)
+    return x.mean(axis=1) if x.ndim > 1 else x
+
+
+def _best_corr(ff, mix_path, inst_path, max_lag=300):
+    """返回 (0 延迟相关, ±max_lag 内最佳相关, lag)。
+
+    alimiter 的 lookahead 会让输出整体延迟（攻击 5ms ≈ 219 samples），
+    0 延迟相关会假性变负；先按 ±max_lag 对齐再判断极性。
+    """
+    a = _decode_mono(ff, mix_path).astype(np.float64)
+    b = _decode_mono(ff, inst_path).astype(np.float64)
+    n = min(len(a), len(b))
+    if n < 256:
+        return 0.0, 0.0, 0
+    a = a[:n]
+    b = b[:n]
+    c0 = float(np.corrcoef(a, b)[0, 1]) if float(a.std()) > 1e-9 and float(b.std()) > 1e-9 else 0.0
+    aa = a - a.mean()
+    bb = b - b.mean()
+    denom = float(np.sqrt(np.sum(aa * aa) * np.sum(bb * bb)))
+    if denom <= 1e-12:
+        return c0, c0, 0
+    cc = np.fft.irfft(np.fft.rfft(aa) * np.conj(np.fft.rfft(bb)), n=n)
+    limit = max(0, min(int(max_lag), n // 2 - 1))
+    best_lag = 0
+    best = c0
+    for lag in range(-limit, limit + 1):
+        val = float(cc[lag % n]) / denom
+        if abs(val) > abs(best):
+            best = val
+            best_lag = lag
+    return c0, best, best_lag
+
+
+def _invert_wav(ff, path, timeout):
+    tmp = path + ".polarity.wav"
+    res = base.run_cmd(
+        [ff, "-y", "-hide_banner", "-loglevel", "error", "-i", path,
+         "-af", "volume=-1", "-ac", "2", "-c:a", "pcm_s16le", tmp],
+        timeout=timeout,
+    )
+    if res["returncode"] != 0 or not base.file_ok(tmp):
+        return False
+    os.replace(tmp, path)
+    return True
 
 
 def run(job, cfg):
@@ -122,6 +173,34 @@ def run(job, cfg):
         base.log("mix: 警告：mp3 峰值 %s dBFS 仍未 <= %s dBFS（已回退 %d 次）" % (
             final_peak, min_peak, retries))
 
+    # 3) 极性自检：按 ±N samples 最佳对齐后再判断（0 延迟会因 limiter lookahead 假性为负）
+    polarity_fixed = False
+    polarity_corr0 = None
+    polarity_corr = None
+    polarity_lag = None
+    if bool(mcfg.get("polarity_check", True)):
+        max_lag = int(mcfg.get("polarity_max_lag", 300))
+        c0, cbest, lag = _best_corr(ff, out, inst, max_lag=max_lag)
+        polarity_corr0 = round(float(c0), 4)
+        polarity_corr = round(float(cbest), 4)
+        polarity_lag = int(lag)
+        base.log("mix: 极性检查 0延迟=%.3f，±%d 最佳对齐=%.3f（lag=%d）" % (c0, max_lag, cbest, lag))
+        if cbest < 0:
+            if _invert_wav(ff, out, timeout):
+                polarity_fixed = True
+                polarity_corr = round(float(-cbest), 4)
+                check = audio.encode_mp3_checked(
+                    ff, out, check_mp3, bitrate=bitrate, min_peak_db=min_peak,
+                    max_retries=0, timeout=timeout,
+                )
+                final_peak = check.get("peakDb")
+                peak_ok = bool(final_peak is not None and float(final_peak) <= min_peak)
+                base.log("mix: 检测到反相，已整体乘 -1（polarityFixed=true）")
+            else:
+                base.log("mix: 检测到反相，但反相重编码失败")
+        elif c0 < 0:
+            base.log("mix: 0 延迟相关为负但最佳对齐为正：判定为 limiter lookahead/延迟，不做反相")
+
     metrics = {
         "shift": shift,
         "irUsed": used_ir,
@@ -133,6 +212,11 @@ def run(job, cfg):
         "mp3PeakMaxDb": min_peak,
         "encodeRetries": retries,
         "gainDb": round(gain, 2),
+        "limiterAttackMs": float(mcfg.get("limiter_attack_ms", 0.1)),
+        "polarityFixed": polarity_fixed,
+        "polarityCorr0": polarity_corr0,
+        "polarityCorr": polarity_corr,
+        "polarityLag": polarity_lag,
         "elapsed_sec": round(res["elapsed_sec"] + master_elapsed, 1),
     }
     base.log("mix: 完成 LUFS=%s peak=%s finalPeak=%s dBFS" % (metrics["lufs"], metrics["peakDb"], metrics["finalPeak"]))

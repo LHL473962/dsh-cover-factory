@@ -179,6 +179,15 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 
 `cover_doctor` 里的 `torch_cuda` 项就是按这条思路判的：它会把 torch 版本、CUDA 是否可用、卡名一起报出来。
 
+## 分离方案（separateModel）
+
+`cover_setup` 的 `separateModel` 二选一，写进 `job_config.options.separateModel`：
+
+- `kim`（默认）：MelBand-RoFormer kim，稳定、听感好；体检（doctor）检查的就是它那套 MSST config/权重。
+- `bs317`：BS-RoFormer ep317，串音指标更低；**目前实验结论是无可测的听感提升**，只建议对比时试。
+
+选 `bs317` 需要另外的 BS-RoFormer ep317 权重与对应 msst config（不是 kim 那套）；缺权重时 `separate` 阶段会失败，按日志/体检提示补。日常保持 `kim` 即可。
+
 ## 本机已下载（mode=local）
 
 不想手动整理目录、也不想联网？用本机音乐客户端里**已下载**的文件：

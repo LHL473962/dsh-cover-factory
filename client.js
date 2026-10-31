@@ -33,6 +33,11 @@ window.__ModuleLoader__.load({
       local: '网易云 / QQ音乐等「已下载」的文件',
       auto: '联网搜索并下载（需要版权确认）',
     }
+    // 分离方案：kim 默认稳；bs317 串音更低，但实验无可测听感提升
+    const SEPARATE_MODELS = [
+      ['kim', 'kim（默认，推荐）'],
+      ['bs317', 'bs317（串音更低，实验无听感提升）'],
+    ]
     const CLIENTS = [
       ['netease', '网易云音乐'],
       ['qqmusic', 'QQ音乐'],
@@ -134,7 +139,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('')
       const [form, setForm] = React.useState({
         singer: '', folder: '', target: '', refs: '',
-        steps: 9000, sources: ['folder'], copyrightAck: false, refSearch: false, voice: 'auto',
+        steps: 9000, sources: ['folder'], copyrightAck: false, refSearch: false, voice: 'auto', separateModel: 'kim',
         clients: ALL_CLIENTS.slice(), keyword: '',
       })
       // 风险提示默认收起
@@ -272,6 +277,7 @@ window.__ModuleLoader__.load({
           if (String(form.keyword || '').trim()) body.keyword = String(form.keyword).trim()
         }
         body.voice = form.voice || 'auto'
+        body.separateModel = form.separateModel || 'kim'
         body.refSearch = !!form.refSearch
         // B站搜索一直需要确认；只用本地来源时，只有要联网搜好球曲才需要
         if (picked.includes('auto') || form.refSearch) body.copyrightAck = !!form.copyrightAck
@@ -556,6 +562,17 @@ window.__ModuleLoader__.load({
               h('option', { value: 'male' }, '男声'),
             ),
             h('div', { style: S.hint }, '自动按目标曲人声判断；若素材被大量排除，请手动指定（男歌手建议直接选男声）。'),
+          ),
+          h('div', { style: S.field },
+            h('label', { style: S.label }, '分离方案'),
+            h('select', {
+              style: S.input,
+              value: form.separateModel || 'kim',
+              onChange: (e) => setForm(Object.assign({}, form, { separateModel: e.target.value })),
+            },
+              SEPARATE_MODELS.map(([id, label]) => h('option', { key: id, value: id }, label)),
+            ),
+            h('div', { style: S.hint }, 'kim 是默认最稳的分离；bs317（BS-RoFormer ep317）串音指标更低，但实验结论是**没有可测的听感提升**——想试可以选，日常建议保持 kim。'),
           ),
           (form.sources || []).includes('folder')
             ? h('div', { style: S.field },

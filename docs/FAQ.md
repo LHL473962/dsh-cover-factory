@@ -289,6 +289,27 @@ cover_setup({ singer: "suis", sources: ["folder", "auto"], folder: "D:/素材/su
 - **没命中**时：`canonical` = 你输入的原名、`confidence` = 0、`matchedBy` = `none`，并给出 `candidates`（编辑距离最近的几个，含 `distance`）供确认；按原名继续建 job，不会失败。
 - 别名表在 `lib/aliases.js`（`ALIAS_TABLE`），扩展就加一条；归一化会处理大小写、全半角、空格/连字符、片假名→平假名→罗马字。
 
+## Q29. 分离方案 kim / bs317 怎么选？
+
+建 job 时 `separateModel` 二选一（界面：新建任务卡片「分离方案」下拉）：
+
+| 值 | 说明 | 建议 |
+| --- | --- | --- |
+| `kim`（默认） | MelBand-RoFormer kim，稳定、听感好 | **日常用这个** |
+| `bs317` | BS-RoFormer ep317，串音（bleed）指标更低 | 想对比时可以试 |
+
+**bs317 目前的实验结论：无可测的听感提升，只有串音指标更低。** 别把它当升级版；默认 kim。写进 `job_config.options.separateModel`，非法值返回 `BAD_SEPARATE_MODEL`（只认 `kim` / `bs317`，`BS-317`、`ep317` 这些别名也认）。
+
+换方案要重建 job（或在 `job_config.json` 里改 `options.separateModel` 后从 `separate` 续跑）；已经分离过的阶段不会自动重跑。
+
+## Q30. cover_status 里的 stemCheck / polarityFixed 是什么？
+
+引擎在 separate 之后会对两条轨做体检（人声/伴奏是否正常、是否反相），插件只是**原样透出**，不自己算：
+
+- `stemCheck`：`{ ok, vocal, instrumental, inverted, warnings[] }`（字段以引擎返回为准）；`ok:false` 时看 `warnings`，多半是素材太差/串音严重/一条轨几乎为空。
+- `polarityFixed`：`true` 说明引擎检测到反相并**自动修好了**，不需要你再操作；`false`/`null` 表示没检测到或还没跑。
+- 还没跑 `separate` 时两者都是 `null`，别据此判断「素材坏了」。
+
 ## 附录：硬件与风险（训练期间必看）
 
 - 训练时**显卡会跑满（接近 100%）**，显存占用约 **7.5–8G**；笔记本会明显发热、风扇全速，可能降频。

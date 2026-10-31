@@ -60,7 +60,7 @@
 
 ## 4. 标准调用顺序
 
-1. cover_setup({ singer, sources: ["folder"|"local"|"auto"...], refs, target, steps, folder, clients, keyword, voice, shift, copyrightAck }) —— 拿 jobId、resolvedSinger、预筛预览（含 contributions / totalCandidates / voiceGuess / localFetch）、eta、shiftNote；
+1. cover_setup({ singer, sources: ["folder"|"local"|"auto"...], refs, target, steps, folder, clients, keyword, voice, separateModel, shift, copyrightAck }) —— 拿 jobId、resolvedSinger、预筛预览（含 contributions / totalCandidates / voiceGuess / localFetch）、eta、shiftNote；
    sources 至少 1 个（多选可组合）；含 "auto" 时必须带 copyrightAck:true，否则只回 needsConfirm 提示；含 "local" 不需要 folder，也不需要账号。旧参数 mode 仍兼容。
 2. 把 jobId + 预计耗时 + 预筛结果复述给用户，再问一句「现在开始跑吗」。
 3. cover_run({ jobId }) —— 立刻返回 pid，不会阻塞。告诉用户「已经在后台跑了，可以关掉这轮对话」。
@@ -104,6 +104,7 @@
   - BAD_VOICE：voice 只认 auto / female / male；男歌手请改 male 再建 job。
   - BAD_CLIENT：clients 只认 netease / qqmusic / kugou / kuwo（或中文名、qq）；返回里的 allowed 就是可选值，转述给用户即可。
   - BAD_SOURCES：sources 至少 1 个、只认 folder/local/auto；问用户要哪种来源（可多选），别自己默认成目录。
+  - BAD_SEPARATE_MODEL：separateModel 只认 kim（默认）/ bs317；别自己改，按返回值提示改。
   - REF_NOT_FOUND / REF_TOO_MANY：好球曲路径不存在（按行号）或超过 20 条；让用户改路径或先留空。
   - BAD_DELETE_MODE：删除的 mode 只能是 soft（默认，可找回）或 purge（物理删除）。
   - DEPS_MISSING：依赖体检是红的，新建任务被拦了。把返回里的 missing/hints 转述给用户，按 docs/INSTALL.md 装完再体检。
@@ -120,3 +121,12 @@
 - 不吹音质：v0.1 只保证管线跑通 + 质检指标（响度 -13±1.5 LUFS、断音率 <12 次/分、音域覆盖 ≥70%）；不合格就照实说并给建议（加步数 / 换素材 / 整首移调）。
 - 对唱/合唱默认排除（低/高区双峰：各 ≥20% 且中位比 >1.5）；男歌手不会被误排除（按 voice=auto/male/female 判定）。被排除要解释原因；用户坚持时再提 allowDuet 设置。
 - 需要用户决策的（版权、硬件不够、素材不行）就停下问，不要替他决定。
+
+## 7. 分离方案与 stem 检测
+
+- `separateModel`：**默认 `kim`，不要主动推荐 `bs317`**。用户问起就说：kim 是默认最稳的；bs317（BS-RoFormer ep317）串音指标更低，但**实验结论是无可测的听感提升**，想对比可以试。参数写进 `job_config.options.separateModel`。
+- 用户没提就传 `kim`（或不传，默认就是 kim），不要在对话里展开分离模型细节。
+- `cover_status` 会透出引擎的 `stemCheck` / `polarityFixed`：
+  - `polarityFixed: true` → 引擎已自动修好反相，**不用让用户操作**，一句「反相已自动纠正」即可。
+  - `stemCheck.ok: false` → 如实转述 `warnings`（人声轨偏小/伴奏串音等），建议换更干净的素材，或考虑 `bs317` 对比（说明无听感提升）；**不要自己算/猜指标**。
+  - 两者为 `null` 表示还没跑 separate，别下结论。

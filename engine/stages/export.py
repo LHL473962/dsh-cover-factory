@@ -118,7 +118,11 @@ def _report_md(job, cfg, qa, mix_metrics, export_metrics):
         "## 关键指标",
         "",
         "- 素材筛选：" + _select_summary(job),
+        "- 分离模型：" + str((job.get("separate_model") or {}).get("id") or "未记录"),
         "- 训练步数：" + _train_summary(job),
+        "- Stem 自检：" + str(((job.get("stem_check") or {}).get("verdict") or "未测")) + (
+            "（" + "；".join((job.get("stem_check") or {}).get("warnings") or [])[:2] + "）"
+            if (job.get("stem_check") or {}).get("warnings") else ""),
         "- 断音率：%s 次/分（合格线 < 12）" % (qmetrics.get("gapPerMin") if qmetrics.get("gapPerMin") is not None else "未测"),
         "- 音域覆盖：%s（合格线 >= 70%%）" % _pct(qmetrics.get("rangeCoverage")),
         "",
@@ -128,6 +132,11 @@ def _report_md(job, cfg, qa, mix_metrics, export_metrics):
     for k in ("lufs", "peakDb", "shift"):
         if mix_metrics.get(k) is not None:
             lines.append("- %s: %s" % (k, mix_metrics.get(k)))
+    if mix_metrics.get("polarityFixed") is not None:
+        lines.append("- 极性自检：%s（lag=%s，0延迟相关=%s，对齐相关=%s）" % (
+            "已反相修正 polarityFixed=true" if mix_metrics.get("polarityFixed") else "正常",
+            mix_metrics.get("polarityLag"), mix_metrics.get("polarityCorr0"),
+            mix_metrics.get("polarityCorr")))
     final_peak = export_metrics.get("finalPeak")
     if final_peak is not None:
         lines.append("- 编码后峰值：%s dBFS（要求 <= -1.0）" % final_peak)

@@ -28,15 +28,34 @@ def _child_env():
 
 # ---------------------------------------------------------------- separate
 
-def separate_cmd(cfg, raw_dir, stems_dir):
+def separate_model(cfg, model_id=None):
+    """解析 options.separateModel：kim（默认）/ bs317，返回配置与权重路径。"""
     s = cfg.get("separate") or {}
+    models = s.get("models") or {}
+    mid = str(model_id or s.get("default_model") or "kim").strip().lower()
+    if mid not in models:
+        mid = str(s.get("default_model") or "kim").strip().lower()
+    m = models.get(mid) or {}
+    paths = cfg.get("paths") or {}
+    return {
+        "id": mid,
+        "label": m.get("label") or mid,
+        "model_type": m.get("model_type") or s.get("model_type") or "mel_band_roformer",
+        "config": paths.get(m.get("config_key") or "msst_config") or "",
+        "checkpoint": paths.get(m.get("checkpoint_key") or "msst_checkpoint") or "",
+    }
+
+
+def separate_cmd(cfg, raw_dir, stems_dir, model_id=None):
+    s = cfg.get("separate") or {}
+    spec = separate_model(cfg, model_id)
     root = _path(cfg, "msst_root")
     cmd = [
         _py(cfg, "msst_python"),
         os.path.join(root, "inference.py"),
-        "--model_type", str(s.get("model_type", "mel_band_roformer")),
-        "--config_path", _path(cfg, "msst_config"),
-        "--start_check_point", _path(cfg, "msst_checkpoint"),
+        "--model_type", str(spec["model_type"]),
+        "--config_path", spec["config"],
+        "--start_check_point", spec["checkpoint"],
         "--input_folder", raw_dir,
         "--store_dir", stems_dir,
         "--disable_detailed_pbar",
@@ -178,7 +197,12 @@ def mix_master_cmd(ff, cfg, src, dst, gain_db):
     m = cfg.get("mix") or {}
     # level=false：alimiter 默认 level=true 会把输出自动拉回 0dBFS（实测峰值 0.1dBFS），
     # 必须关掉 limit 才真正生效；等响由 mix.py 的二次校正负责。
-    af = "volume=%sdB,alimiter=limit=%sdB:level=false" % (round(float(gain_db), 2), m.get("limiter_db", -1.5))
+    # attack 是 lookahead（毫秒）：默认 5ms 会延迟 219 samples，导致与伴奏 0 延迟相关为负。
+    # 这里默认 0.1ms（最小允许值，延迟 3 samples），从根上避免“假反相”。
+    attack = max(0.1, float(m.get("limiter_attack_ms", 0.1)))
+    release = max(1.0, float(m.get("limiter_release_ms", 50)))
+    af = "volume=%sdB,alimiter=limit=%sdB:level=false:attack=%s:release=%s" % (
+        round(float(gain_db), 2), m.get("limiter_db", -1.5), attack, release)
     return [ff, "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-af", af, "-ac", "2", "-c:a", "pcm_s16le", dst]
 
 

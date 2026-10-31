@@ -12,6 +12,8 @@
     "msst_python": "D:/Apps/MSST/01_人声分离_MSST-GUI/env/python.exe",
     "msst_config": "D:/Apps/MSST/01_人声分离_MSST-GUI/configs/config_vocals_mel_band_roformer_kim.yaml",
     "msst_checkpoint": "D:/Apps/MSST/01_人声分离_MSST-GUI/pretrain/MelBandRoformer_kim.ckpt",
+    "bs317_config": "D:/Apps/MSST/01_人声分离_MSST-GUI/configs/model_bs_roformer_ep_317_sdr_12.9755.yaml",
+    "bs317_checkpoint": "D:/Apps/MSST/01_人声分离_MSST-GUI/pretrain/model_bs_roformer_ep_317_sdr_12.9755.ckpt",
     "applio_root": "D:/Apps/_dl/applio/Applio-main",
     "applio_python": "D:/Apps/applio-env/Scripts/python.exe",
     "rvc_root": "D:/Apps/_dl/old_rvc/rvc",
@@ -67,6 +69,29 @@
   "reuseModel": "",
   "separate": {
     "model_type": "mel_band_roformer",
+    "default_model": "kim",
+    "models": {
+      "kim": {
+        "label": "kim (MelBand-RoFormer)",
+        "model_type": "mel_band_roformer",
+        "config_key": "msst_config",
+        "checkpoint_key": "msst_checkpoint"
+      },
+      "bs317": {
+        "label": "bs317 (BS-RoFormer)",
+        "model_type": "bs_roformer",
+        "config_key": "bs317_config",
+        "checkpoint_key": "bs317_checkpoint"
+      }
+    },
+    "stem_check": {
+      "clip_sec": 60,
+      "vocal_perc_max": 0.28,
+      "vocal_drums_perc": 0.30,
+      "inst_gap": 0.08,
+      "swap_margin": 0.03,
+      "vocal_loud_db": 0.0
+    },
     "extract_instrumental": true,
     "force_cpu": false,
     "device_ids": 0,
@@ -136,6 +161,10 @@
     "target_lufs": -14.0,
     "headroom_db": 1.0,
     "limiter_db": -1.5,
+    "limiter_attack_ms": 0.1,
+    "limiter_release_ms": 50,
+    "polarity_check": true,
+    "polarity_max_lag": 300,
     "highpass": 45,
     "warm_freq": 260,
     "warm_gain_db": -1.2,
