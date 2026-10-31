@@ -33,7 +33,7 @@ try {
   if (!pkg.dsh || !pkg.dsh.client) errors.push('package.json 缺 dsh.client')
 } catch (e) { errors.push('package.json 解析失败: ' + e.message) }
 
-const SELF = ['user', '<DATA_DIR>', 'C:/Users/yourname']
+const SELF = ['a' + '1599', 'D:' + '/VoiceData', 'C:/Users/' + 'a' + '1599']
 const SCAN = ['index.js', 'client.js'].concat(
   listFiles('lib', '.js'),
   ['engine/run.py', 'engine/config_default.json', 'engine/vendor/applio/dsh_rvc2.py', 'scripts/install.ps1', 'scripts/install-plugin.ps1'],
