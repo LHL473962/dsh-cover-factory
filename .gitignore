@@ -11,3 +11,4 @@ _deleted/
 *.log
 engine/examples/sample-work/logs/
 engine/config.local.json
+dist/

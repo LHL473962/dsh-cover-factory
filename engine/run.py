@@ -1008,6 +1008,10 @@ def cmd_setup(args):
         argv.append("--install")
     else:
         argv.append("--check")
+    if getattr(args, "install_fairseq", False):
+        argv.append("--install-fairseq")
+    if getattr(args, "install_applio", False):
+        argv.append("--install-applio")
     if getattr(args, "with_models", False):
         argv.append("--with-models")
     if getattr(args, "python", ""):
@@ -1079,6 +1083,10 @@ def main(argv=None):
                          help="下载 MSST 代码 + MelBand kim + hubert/rmvpe（默认 dry-run，--yes 才下载）")
     p_setup.add_argument("--install-torch", dest="install_torch", action="store_true",
                          help="按显卡 capability 安装对应 torch（默认 dry-run）")
+    p_setup.add_argument("--install-fairseq", dest="install_fairseq", action="store_true",
+                         help="安装预编译 fairseq 0.12.2 到 paths.rvc_python（默认 dry-run）")
+    p_setup.add_argument("--install-applio", dest="install_applio", action="store_true",
+                         help="安装 Applio 训练器（clone + venv + torch + requirements；默认 dry-run）")
     p_setup.add_argument("--python", default="", help="目标 Python 解释器（默认 paths.python）")
     p_setup.add_argument("--dry-run", dest="dry_run", action="store_true", help="只打印 pip 命令")
     p_setup.add_argument("--yes", action="store_true", help="确认真执行安装")

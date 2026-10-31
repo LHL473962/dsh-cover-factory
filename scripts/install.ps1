@@ -16,7 +16,7 @@
 .PARAMETER SkipDeps
   Skip the bootstrap dependency/model step (useful for idempotence tests).
 .PARAMETER PythonPath
-  Python 3.10+ interpreter used for bootstrap. Defaults to "python" on PATH.
+  Python 3.11+ interpreter used for bootstrap (Applio 3.7.1 requires 3.11+). Defaults to "python" on PATH.
 #>
 param(
     [string]$ProfilePath = "",
@@ -170,7 +170,7 @@ if ($SkipDeps) {
     else {
         $cmd = Get-Command python -ErrorAction SilentlyContinue
         if (-not $cmd) {
-            Fail-Install 16 "E_PYTHON_NOT_FOUND" "python not found on PATH" "Install Python 3.10+, or pass -PythonPath <python.exe>"
+            Fail-Install 16 "E_PYTHON_NOT_FOUND" "python not found on PATH" "Install Python 3.11+ (Applio), or pass -PythonPath <python.exe>"
         }
         $py = $cmd.Source
     }
@@ -178,6 +178,7 @@ if ($SkipDeps) {
         Fail-Install 16 "E_PYTHON_NOT_FOUND" ("Python not found: " + $py) "Pass -PythonPath <python.exe>"
     }
     $pyArgs = @("engine/setup/bootstrap.py", "--install", "--with-models")
+    if ($PythonPath) { $pyArgs += @("--python", $PythonPath) }
     if ($Yes) { $pyArgs += "--yes" }
     Write-Step "deps" "running" ("bootstrap --install --with-models" + $(if ($Yes) { " --yes" } else { " (dry-run; pass -Yes to download)" }))
     $bootstrapJson = ""

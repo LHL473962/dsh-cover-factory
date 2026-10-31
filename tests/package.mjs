@@ -18,7 +18,7 @@ const REQUIRED = [
   'engine/stages/dataset.py', 'engine/stages/train.py', 'engine/stages/convert.py', 'engine/stages/mix.py',
   'engine/stages/qa.py', 'engine/stages/export.py',
   'engine/setup/checks.py', 'engine/setup/bootstrap.py',
-  'engine/vendor/applio/dsh_rvc2.py',
+  'engine/vendor/applio/dsh_rvc2.py', 'engine/assets/room_ir.wav', 'docs/MIXING.md',
   'docs/QUICKSTART.md', 'docs/INSTALL.md', 'docs/INSTALL_AI.md', 'docs/INSTALL_ANY_PLUGIN.md',
   'docs/FAQ.md', 'docs/UI.md', 'preset/prompts.md',
   'scripts/install.ps1', 'scripts/install-plugin.ps1',

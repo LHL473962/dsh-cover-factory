@@ -88,6 +88,9 @@ def run(job, cfg):
     ir = (cfg.get("paths") or {}).get("room_ir") or ""
     if ir:
         ir = os.path.expanduser(ir)
+        if not os.path.isabs(ir):
+            ir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ir)
+            ir = os.path.normpath(ir)
     ir_used = base.file_ok(ir)
     if not ir_used:
         base.log("mix: 没找到 IR（%s），本次不带卷积混响" % ir)

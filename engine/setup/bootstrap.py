@@ -6,9 +6,12 @@
     python engine/setup/bootstrap.py --install
     python engine/setup/bootstrap.py --install --config 覆盖.json
     python engine/setup/bootstrap.py --install-torch [--python <exe>] [--dry-run] [--yes]
+    python engine/setup/bootstrap.py --install-applio [--python <exe>] [--yes]
+    python engine/setup/bootstrap.py --install-fairseq [--yes]
 
-步骤：yt-dlp(pip) -> ffmpeg(pip imageio-ffmpeg/手动) -> 旧版 RVC(git clone + 拷本机权重) -> MSST(只提示)。
---install-torch 单独走：按显卡 capability 选 cu128/cu121/cu118，默认只打印命令（真装要 --yes 或 --install）。
+--install 链：torch -> Applio -> 旧版 RVC -> fairseq -> MSST/权重 -> yt-dlp/ffmpeg。
+--install-applio：固定 Applio 3.7.1（git 失败回退 codeload zip）-> venv -> torch -> requirements -> import core。
+--install-fairseq：预编译 fairseq 0.12.2 zip（sha256 校验）解到 paths.rvc_python 的 site-packages。
 每步写 engine/setup/setup.log；单步失败不中断后续；最后输出 JSON 汇总（stdout 只有 JSON，进度走 stderr）。
 """
 
@@ -17,11 +20,14 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE_DIR = os.path.dirname(HERE)
@@ -474,6 +480,334 @@ def _next_steps(steps):
     return out
 
 
+FAIRSEQ_DEFAULT_URL = ("https://github.com/LHL473962/dsh-cover-factory/releases/download/"
+                       "v0.1.11/fairseq-0.12.2-win-py310.zip")
+FAIRSEQ_DEFAULT_SHA = "8ba5a4af1354f69aa383ec12067f2b01d5f374bdceb7e0b78a900d033cf5b368"
+
+
+def _fairseq_check(py):
+    rc, out = run_cmd([py, "-c", "import fairseq;print(fairseq.__version__)"], timeout=120)
+    if rc == 0:
+        ver = (out.strip().splitlines() or ["?"])[-1].strip()
+        return True, ver
+    return False, (out.strip().splitlines() or ["import fairseq 失败"])[-1][:240]
+
+
+def _site_packages(py):
+    rc, out = run_cmd([py, "-c", "import site;print(site.getsitepackages()[-1])"], timeout=60)
+    if rc != 0:
+        return ""
+    for line in reversed(out.strip().splitlines()):
+        p = line.strip()
+        if p and os.path.isdir(p):
+            return p
+    return ""
+
+
+def install_fairseq(cfg, execute):
+    """预编译 fairseq 0.12.2 解压到 paths.rvc_python 的 site-packages（校验 sha256）。"""
+    paths = cfg.get("paths") or {}
+    py = paths.get("rvc_python") or ""
+    url = paths.get("fairseq_zip_url") or FAIRSEQ_DEFAULT_URL
+    sha = paths.get("fairseq_zip_sha256") or FAIRSEQ_DEFAULT_SHA
+    if not py or not os.path.isfile(py):
+        return [action("fairseq", "failed", "paths.rvc_python 不可用: " + str(py), str(py),
+                       "先配 paths.rvc_python（旧版 RVC 的 Python 3.10），或手动下载 " + url)]
+    ok, detail = _fairseq_check(py)
+    if ok:
+        return [action("fairseq", "skipped", "已安装 fairseq " + str(detail), py)]
+    if not execute:
+        return [action("fairseq", "skipped", "dry-run：加 --yes 下载并安装 " + url, py, url)]
+
+    site = _site_packages(py)
+    if not site:
+        return [action("fairseq", "failed", "拿不到 site-packages（python 不可用）", py,
+                       "检查 paths.rvc_python；或手动下载 " + url)]
+
+    tmpdir = tempfile.mkdtemp(prefix="dsh-fairseq-")
+    zpath = os.path.join(tmpdir, "fairseq.zip")
+    try:
+        log("[fairseq] 下载 %s（约 11.4MB）" % url)
+        try:
+            _http_download(url, zpath, expected_size=None, timeout=120)
+        except Exception as exc:  # noqa: BLE001
+            return [action("fairseq", "failed", "下载失败：%s" % exc, zpath, url)]
+        got = _sha256_file(zpath)
+        if sha and got.lower() != str(sha).lower():
+            return [action("fairseq", "failed", "sha256 不符（%s，期望 %s）" % (got[:16], str(sha)[:16]), zpath, url)]
+        try:
+            with zipfile.ZipFile(zpath) as zf:
+                names = zf.namelist()
+                bad = [n for n in names if n.startswith("/") or ".." in n.replace("\\", "/").split("/")]
+                if bad:
+                    return [action("fairseq", "failed", "zip 含不安全路径，已拒绝", zpath, url)]
+                zf.extractall(site)
+        except Exception as exc:  # noqa: BLE001
+            return [action("fairseq", "failed", "解压失败：%s" % exc, zpath, url)]
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    deps = ["omegaconf<2.1", "hydra-core<1.1", "sacrebleu", "bitarray", "regex", "tqdm", "cffi"]
+    log("[fairseq] 安装依赖：" + " ".join(deps))
+    rc, out = run_cmd([py, "-m", "pip", "install", "--disable-pip-version-check"] + deps, timeout=1800)
+    if rc != 0:
+        return [action("fairseq", "failed", "依赖安装失败（exit=%s）" % rc, py, "手动：%s -m pip install %s" % (py, " ".join(deps)))]
+    ok2, detail2 = _fairseq_check(py)
+    if not ok2:
+        return [action("fairseq", "failed", "导入仍失败：%s" % detail2, py, "手动下载 %s 解压到 %s" % (url, site))]
+    return [action("fairseq", "done", "已安装 fairseq %s（预编译包）" % detail2, py)]
+
+
+APPLIO_REPO = "https://github.com/IAHispano/Applio.git"
+APPLIO_TAG = "3.7.1"
+APPLIO_COMMIT = "6f69726b140c615c8cc6831a7db8b7c5e48ba8af"
+
+
+def _venv_python(venv_dir):
+    if os.name == "nt":
+        return os.path.join(venv_dir, "Scripts", "python.exe")
+    return os.path.join(venv_dir, "bin", "python")
+
+
+def _is_venv(venv_dir):
+    return os.path.isfile(os.path.join(venv_dir, "pyvenv.cfg"))
+
+
+def _applio_requirements(src_root):
+    """展开 -r 引用并去掉 torch/torchaudio（它们由 cu 选择逻辑单独装）。"""
+    skip = {"torch", "torchaudio", "torchvision"}
+    lines = []
+
+    def visit(path, seen):
+        if not os.path.isfile(path) or path in seen:
+            return
+        seen.add(path)
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                s = raw.strip()
+                if not s or s.startswith("#"):
+                    continue
+                if s.startswith("-r "):
+                    visit(os.path.join(os.path.dirname(path), s[3:].strip()), seen)
+                    continue
+                pkg = re.split(r"[<>=!~ ]+", s, 1)[0].strip().lower()
+                if pkg in skip:
+                    continue
+                lines.append(s)
+
+    visit(os.path.join(src_root, "requirements.txt"), set())
+    return lines
+
+
+def _pip_torch(py, cfg, timeout=3600):
+    detected = detect_gpu(py)
+    plan = checks.torch_plan_for(detected.get("capability"), py, detected.get("gpu") or "")
+    cmd = [py, "-m", "pip", "install", "--disable-pip-version-check", "torch", "torchaudio"]
+    if plan.get("index"):
+        cmd += ["--index-url", plan["index"]]
+    log("[applio] torch：%s（%s）" % (" ".join(cmd), plan.get("torch") or "cpu"))
+    return run_cmd(cmd, timeout=timeout), plan
+
+
+def install_applio_steps(cfg, execute, base_python="", python_override=""):
+    """clone Applio（固定 tag）+ venv + torch + requirements + import core 验证。"""
+    paths = cfg.get("paths") or {}
+    root = paths.get("applio_root") or ""
+    py = paths.get("applio_python") or ""
+    steps = []
+    if not root:
+        return [action("applio", "failed", "paths.applio_root 为空", "", "在 config.local.json 配 paths.applio_root")]
+    if not py:
+        return [action("applio", "failed", "paths.applio_python 为空", "", "在 config.local.json 配 paths.applio_python")]
+    py_abs = os.path.abspath(py)
+    if os.path.basename(os.path.dirname(py_abs)).lower() not in ("scripts", "bin"):
+        return [action("applio_venv", "failed",
+                       "paths.applio_python 必须指向 venv 里的 python（.../Scripts/python.exe 或 .../bin/python）: " + py,
+                       py, "配 paths.applio_python = <venv>/Scripts/python.exe")]
+    venv_dir = os.path.dirname(os.path.dirname(py_abs))
+    ready = checks.check_applio(cfg)
+    if ready.get("ok"):
+        return [action("applio", "skipped", "已安装：" + str(ready.get("found")), root)]
+    if not execute:
+        return [action("applio", "skipped",
+                       "dry-run：加 --yes 安装 Applio %s（约 3–5G / 20–40 分钟）到 %s" % (APPLIO_TAG, root),
+                       root, APPLIO_REPO)]
+
+    log("[applio] 目标 %s（tag %s）" % (root, APPLIO_TAG))
+    log("[applio] 警告：需要 3–5G 磁盘、约 20–40 分钟（torch + CUDA + requirements）")
+
+    # 1) repo（git 优先；github.com:443 被墙时回退 codeload zip，仍是固定 tag）
+    parent = os.path.dirname(os.path.abspath(root))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    if os.path.isdir(os.path.join(root, ".git")):
+        rc, out = run_cmd(["git", "-C", root, "fetch", "--tags", "--force"], timeout=1800)
+        rc2, out2 = run_cmd(["git", "-C", root, "checkout", "-f", APPLIO_TAG], timeout=600)
+        if rc == 0 and rc2 == 0:
+            steps.append(action("applio_repo", "skipped", "已存在，checkout %s" % APPLIO_TAG, root))
+        elif os.path.isfile(os.path.join(root, "core.py")):
+            steps.append(action("applio_repo", "skipped", "git 更新失败但 core.py 已存在，继续：%s" % (
+                (out2 or out)[-200:]), root))
+        else:
+            steps.append(action("applio_repo", "failed", "git fetch/checkout %s 失败：%s" % (
+                APPLIO_TAG, (out2 or out)[-300:]), root, APPLIO_REPO))
+            return steps
+    elif os.path.isdir(root) and os.listdir(root):
+        steps.append(action("applio_repo", "skipped", "目录已存在（非 git），跳过 clone", root))
+    else:
+        rc, out = run_cmd(["git", "clone", "--depth", "1", "--branch", APPLIO_TAG,
+                           APPLIO_REPO, root], timeout=1800)
+        if rc != 0:
+            log("[applio] git clone 失败，回退 codeload zip（tag %s）" % APPLIO_TAG)
+            shutil.rmtree(root, ignore_errors=True)
+            zurl = "https://codeload.github.com/IAHispano/Applio/zip/refs/tags/" + APPLIO_TAG
+            tmp = tempfile.mkdtemp(prefix="dsh-applio-zip-")
+            zpath = os.path.join(tmp, "applio.zip")
+            try:
+                _http_download(zurl, zpath, expected_size=None, timeout=120)
+                with zipfile.ZipFile(zpath) as zf:
+                    names = zf.namelist()
+                    bad = [n for n in names if n.startswith("/") or ".." in n.replace("\\", "/").split("/")]
+                    if bad:
+                        raise RuntimeError("zip 含不安全路径")
+                    zf.extractall(tmp)
+                tops = [d for d in os.listdir(tmp)
+                        if os.path.isdir(os.path.join(tmp, d)) and os.path.isfile(os.path.join(tmp, d, "core.py"))]
+                if not tops:
+                    raise RuntimeError("zip 里找不到 core.py")
+                shutil.copytree(os.path.join(tmp, tops[0]), root)
+                rc = 0
+                steps.append(action("applio_repo", "done", "git 不可用，已用 codeload zip 安装 %s" % APPLIO_TAG, root))
+            except Exception as exc:  # noqa: BLE001
+                steps.append(action("applio_repo", "failed", "git/codeload 都失败：%s" % exc, root,
+                                    "手动下载 https://github.com/IAHispano/Applio/archive/refs/tags/%s.zip 解压到 %s" % (APPLIO_TAG, root)))
+                shutil.rmtree(tmp, ignore_errors=True)
+                return steps
+            shutil.rmtree(tmp, ignore_errors=True)
+        else:
+            run_cmd(["git", "-C", root, "checkout", "-f", APPLIO_COMMIT], timeout=600)
+            steps.append(action("applio_repo", "done", "clone %s（commit %s）" % (APPLIO_TAG, APPLIO_COMMIT[:10]), root))
+
+    if not os.path.isfile(os.path.join(root, "core.py")):
+        steps.append(action("applio_repo", "failed", "仓库缺 core.py", root, APPLIO_REPO))
+        return steps
+    driver = os.path.join(root, "dsh_rvc2.py")
+    vendor = os.path.join(ENGINE_DIR, "vendor", "applio", "dsh_rvc2.py")
+    if not os.path.isfile(driver) and os.path.isfile(vendor):
+        try:
+            shutil.copy2(vendor, driver)
+            log("[applio] 复制训练驱动 dsh_rvc2.py")
+        except OSError as exc:
+            steps.append(action("applio_repo", "failed", "复制 dsh_rvc2.py 失败：%s" % exc, driver))
+            return steps
+
+    # 2) venv
+    if os.path.isfile(py) and _is_venv(venv_dir):
+        steps.append(action("applio_venv", "skipped", "venv 已存在", py))
+    else:
+        base = python_override or base_python or paths.get("python") or sys.executable
+        base = checks.resolve_python_path({"paths": {"python": base}})
+        if not os.path.isfile(base):
+            steps.append(action("applio_venv", "failed", "找不到基础 Python: " + str(base), "", "传 --python <python.exe>"))
+            return steps
+        os.makedirs(venv_dir, exist_ok=True)
+        rc, out = run_cmd([base, "-m", "venv", "--clear", venv_dir], timeout=900)
+        if rc != 0 or not os.path.isfile(_venv_python(venv_dir)):
+            steps.append(action("applio_venv", "failed", "venv 创建失败（exit=%s）：%s" % (
+                rc, out[-300:]), venv_dir, "确认 Python 3.10+ 可用"))
+            return steps
+        py = _venv_python(venv_dir)
+        steps.append(action("applio_venv", "done", "venv 已创建", py))
+
+    if not os.path.isfile(py):
+        steps.append(action("applio_venv", "failed", "venv python 不存在: " + py, py))
+        return steps
+
+    rc, out = run_cmd([py, "-c", "import sys;print('%d.%d' % sys.version_info[:2])"], timeout=60)
+    ver = (out.strip().splitlines() or ["?"])[-1].strip() if rc == 0 else "?"
+    if ver in ("3.10", "3.9", "3.8", "3.7") or ver == "?":
+        steps.append(action(
+            "applio_python", "failed",
+            "Applio %s 需要 Python >=3.11（requirements numpy 2.4.6 只支持 3.11+），当前 venv=%s" % (APPLIO_TAG, ver),
+            py, "用 --python <Python 3.11 解释器> 重新跑 setup --install-applio --yes",
+        ))
+        return steps
+
+    # 3) torch（先装，再用过滤后的 requirements）
+    rc, out = run_cmd([py, "-c", "import torch;print(torch.cuda.is_available())"], timeout=180)
+    gpu_present = bool(_gpu_name_from_smi())
+    torch_ok = rc == 0 and (out.strip().endswith("True") or not gpu_present)
+    if torch_ok:
+        steps.append(action("applio_torch", "skipped", "torch 已可用", py))
+    else:
+        res, plan = _pip_torch(py, cfg)
+        if res["returncode"] != 0:
+            steps.append(action("applio_torch", "failed", "torch 安装失败（exit=%s）：%s" % (
+                res["returncode"], res["tail"][-300:]), py, "手动: %s -m pip install torch torchaudio --index-url %s" % (
+                    py, plan.get("index") or "https://pypi.org/simple")))
+            return steps
+        steps.append(action("applio_torch", "done", "torch 安装完成（%s）" % (plan.get("torch") or "cpu"), py))
+
+    # 4) requirements（过滤 torch/torchaudio）
+    req_lines = _applio_requirements(root)
+    req_tmp = os.path.join(root, ".dsh-requirements.txt")
+    try:
+        with open(req_tmp, "w", encoding="utf-8") as f:
+            f.write("\n".join(req_lines) + "\n")
+    except OSError as exc:
+        steps.append(action("applio_requirements", "failed", "写 requirements 失败：%s" % exc, root))
+        return steps
+    if not req_lines:
+        steps.append(action("applio_requirements", "failed", "requirements.txt 为空或读不到", root))
+        return steps
+    log("[applio] pip install -r .dsh-requirements.txt（%d 条，torch 已单独装）" % len(req_lines))
+    rc, out = run_cmd([py, "-m", "pip", "install", "--disable-pip-version-check",
+                       "-r", req_tmp], timeout=5400)
+    if rc != 0:
+        steps.append(action("applio_requirements", "failed", "requirements 安装失败（exit=%s）：%s" % (
+            rc, out[-500:]), root, "看 %s；可重跑 --install-applio --yes" % LOG))
+        return steps
+    steps.append(action("applio_requirements", "done", "requirements 安装完成（%d 条）" % len(req_lines), root))
+
+    # 5) verify
+    rc, out = run_cmd([py, "-c", "import core;print('ok')"], timeout=300, cwd=root)
+    if rc != 0:
+        steps.append(action("applio_verify", "failed", "import core 失败：%s" % out[-400:], root,
+                            "手动: cd %s && %s -c \"import core\"" % (root, py)))
+        return steps
+    rc2, out2 = run_cmd([py, "-c", "import transformers;print(transformers.__version__)"], timeout=180, cwd=root)
+    rc3, out3 = run_cmd([py, "-c", "import faiss;print(getattr(faiss,'__version__','ok'))"], timeout=180, cwd=root)
+    if rc2 != 0:
+        steps.append(action("applio_verify", "failed", "import transformers 失败：%s" % out2[-300:], root,
+                            "重跑 --install-applio --yes，或手动 pip install transformers"))
+        return steps
+    detail = "import core ok；transformers %s" % (out2.strip().splitlines() or ["?"])[-1]
+    if rc3 != 0:
+        detail += "；faiss 未装（可选，索引训练会降级）"
+    steps.append(action("applio_verify", "done", detail, root))
+    return steps
+
+
+def _install_torch_action(cfg, execute, python_override=""):
+    before = checks.check_torch(cfg)
+    if before.get("ok"):
+        return action("torch", "skipped", before.get("found"), before.get("path"))
+    if not execute:
+        return action("torch", "skipped", "dry-run：加 --yes 安装 torch（按显卡自动选 cu 版本）", before.get("path") or "")
+    py = checks.resolve_python_path(cfg, python_override)
+    det = detect_gpu(py)
+    plan = checks.torch_plan_for(det.get("capability"), py, det.get("gpu") or "")
+    cmd = [py, "-m", "pip", "install", "--disable-pip-version-check", "torch"]
+    if plan.get("index"):
+        cmd += ["--index-url", plan["index"]]
+    rc, out = run_cmd(cmd, timeout=3600)
+    after = checks.check_torch({"paths": dict((cfg.get("paths") or {}), python=py)})
+    if rc == 0 and after.get("ok"):
+        return action("torch", "done", after.get("found"), py)
+    return action("torch", "failed", "torch 安装失败（exit=%s）：%s" % (rc, out[-300:]), py,
+                  "手动: %s" % (plan.get("pip") or "pip install torch"))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="bootstrap.py", description="翻唱工厂依赖检查/安装")
     parser.add_argument("--check", action="store_true", help="只检测（默认）")
@@ -481,6 +815,10 @@ def main(argv=None):
     parser.add_argument("--with-models", dest="with_models", action="store_true",
                         help="下载 MSST 代码 + MelBand kim + hubert/rmvpe（默认 dry-run，--yes 才下载）")
     parser.add_argument("--install-torch", action="store_true", help="按显卡 capability 安装对应 torch（默认 dry-run）")
+    parser.add_argument("--install-fairseq", dest="install_fairseq", action="store_true",
+                        help="安装预编译 fairseq 0.12.2 到 paths.rvc_python（默认 dry-run）")
+    parser.add_argument("--install-applio", dest="install_applio", action="store_true",
+                        help="安装 Applio 训练器（clone + venv + torch + requirements；默认 dry-run）")
     parser.add_argument("--python", default="", help="目标 Python 解释器（默认 paths.python）")
     parser.add_argument("--dry-run", action="store_true", help="只打印 pip 命令，不执行")
     parser.add_argument("--yes", action="store_true", help="确认真执行安装")
@@ -500,17 +838,44 @@ def main(argv=None):
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return code
 
+    if args.install_fairseq:
+        steps = [_normalize_step(s) for s in install_fairseq(cfg, bool(args.yes))]
+        payload = {"ok": all(s["status"] != "failed" for s in steps), "steps": steps,
+                   "nextSteps": _next_steps(steps)}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ok"] else 1
+
+    if args.install_applio:
+        steps = [_normalize_step(s) for s in install_applio_steps(
+            cfg, bool(args.yes), base_python=args.python, python_override=args.python)]
+        payload = {"ok": all(s["status"] != "failed" for s in steps), "steps": steps,
+                   "nextSteps": _next_steps(steps)}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ok"] else 1
+
     if args.install or args.with_models:
         steps = []
         if args.install:
             log("==== bootstrap --install start ====")
-            for step in (install_ytdlp, install_ffmpeg, install_old_rvc, install_msst):
+            chain = []
+            chain.append(lambda: _install_torch_action(cfg, bool(args.yes), args.python))
+            chain.append(lambda: install_applio_steps(cfg, bool(args.yes), base_python=args.python,
+                                                     python_override=args.python))
+            chain.append(lambda: [install_old_rvc(cfg)])
+            chain.append(lambda: install_fairseq(cfg, bool(args.yes)))
+            chain.append(lambda: [install_msst(cfg)])
+            chain.append(lambda: [install_ytdlp(cfg)])
+            chain.append(lambda: [install_ffmpeg(cfg)])
+            for fn in chain:
                 try:
-                    act = step(cfg)
+                    acts = fn()
                 except Exception as exc:  # noqa: BLE001
-                    act = action(step.__name__, "failed", "%s: %s" % (type(exc).__name__, exc))
-                log("step %-9s -> %-9s %s" % (act.get("name"), act.get("status"), str(act.get("detail"))[:200]))
-                steps.append(_normalize_step(act))
+                    acts = [action("install", "failed", "%s: %s" % (type(exc).__name__, exc))]
+                if isinstance(acts, dict):
+                    acts = [acts]
+                for act in acts:
+                    log("step %-16s -> %-9s %s" % (act.get("name"), act.get("status"), str(act.get("detail"))[:200]))
+                    steps.append(_normalize_step(act))
             log("==== bootstrap --install done ====")
         if args.with_models:
             log("==== bootstrap --with-models start（%s）====" % ("执行" if args.yes else "dry-run"))

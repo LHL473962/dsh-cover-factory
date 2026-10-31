@@ -165,9 +165,10 @@ if ($LASTEXITCODE -ne 0 -or $d.ok -ne $true) { throw 'G4.1 FAIL' }
 $d.checks | Where-Object { -not $_.ok } | Format-Table name,found,hint
 ```
 
-- 缺 **yt-dlp** 也会让 exit 非 0（它算可选，但本协议要求全绿）：`python engine/run.py setup --install` 装上再查。
-- 缺 torch / CUDA 不匹配 → `python engine/run.py setup --install-torch --yes`（先 `--dry-run` 看命令）。
-- 缺 MSST / Applio / 旧版 RVC → 见 [`docs/INSTALL.md`](INSTALL.md) 的路径 B（代码要 clone、MSST 权重需按其模型页条款自取）。
+- 缺 **yt-dlp / ffmpeg / 旧版 RVC / fairseq / Applio / torch**：优先 `python engine/run.py setup --install --with-models --yes`（会按顺序补）。
+- 缺 Applio → `setup --install-applio --python <Python 3.11> --yes`（约 3–5G / 20–40 分钟；Python 3.10 会被版本门拒绝）。
+- 缺 fairseq → `setup --install-fairseq --yes`（预编译 MIT 包，装到 paths.rvc_python）。
+- 缺 MSST 权重 → `setup --with-models --yes`；仍失败再按 [`docs/INSTALL.md`](INSTALL.md) 路径 B 手动补。
 - 还不行就停：`E_DOCTOR_RED` / `E_DOCTOR_EXIT`。**不要改 `engine/` 里的代码绕过体检**。
 
 ### G4.2 测试 job：`steps=300`、`import`、无 `target`，跑完 `fetch`
@@ -257,12 +258,14 @@ $p | ConvertTo-Json -Depth 20 | Out-File -Encoding utf8 "<PROFILE>\package.json"
 ```powershell
 # A1 依赖体检（先看缺什么）
 & $PY "$PLUGIN_DIR\engine\run.py" doctor
-# A2 自动装能自动装的部分（yt-dlp / imageio-ffmpeg / 旧版 RVC；MSST 只提示）
-& $PY "$PLUGIN_DIR\engine\run.py" setup --install
-# A3 torch：先 dry-run 看命令，再 --yes 真装（约 2.5–3G，按显卡选 cu128/cu121/cu118）
+# A2 一键链：torch -> Applio -> 旧版 RVC -> fairseq -> MSST/权重 -> yt-dlp/ffmpeg
+& $PY "$PLUGIN_DIR\engine\run.py" setup --install --with-models --yes
+# A3 单装 torch（先 dry-run 看命令）
 & $PY "$PLUGIN_DIR\engine\run.py" setup --install-torch --dry-run
 & $PY "$PLUGIN_DIR\engine\run.py" setup --install-torch --yes
-# A4 Applio / MSST：按 docs/INSTALL.md 路径 B 手动 clone + 下权重，再把路径写进 engine/config_default.json 的 paths
+# A4 Applio（需要 Python 3.11+）/ fairseq（旧版 RVC）
+& $PY "$PLUGIN_DIR\engine\run.py" setup --install-applio --python <Python 3.11> --yes
+& $PY "$PLUGIN_DIR\engine\run.py" setup --install-fairseq --yes
 # A5 复查
 & $PY "$PLUGIN_DIR\engine\run.py" doctor
 ```
@@ -321,7 +324,7 @@ $p | ConvertTo-Json -Depth 20 | Out-File -Encoding utf8 "<PROFILE>\package.json"
 ## 训练链说明（AI 必读）
 
 - **不要去找作者要 `dsh_rvc2.py`**：它在仓库里，路径 `engine/vendor/applio/dsh_rvc2.py`，引擎会自动使用。
-- 训练前确认 Applio 环境可导入：`<applio_python> -c "import torch; print('ok')"`（训练不需要 fairseq）。
-- 换声前确认旧版 RVC 环境：`<rvc_python> -c "import fairseq; print('ok')"`。
-- 若 `import fairseq` 失败：优先用 Applio 自带安装脚本；否则装 VS Build Tools 后 `pip install fairseq==0.12.2 --no-build-isolation`；或从已装环境复制 `site-packages/fairseq`。
+- 训练前确认 Applio 环境可导入：`<applio_python> -c "import core; print('ok')"`；Applio 3.7.1 需要 Python 3.11+（numpy 2.4.6 不支持 3.10）。
+- 换声前确认旧版 RVC 环境：`<rvc_python> -c "import fairseq; print(fairseq.__version__)"`。
+- 若 `import fairseq` 失败：首选 `setup --install-fairseq --yes`（预编译 zip，sha256 校验）。还不行再手动下载同一 zip 解压到 site-packages，或用 Applio 安装脚本/VS Build Tools 编译（最后手段）。
 - 训练很慢（9000 步约 55 分钟 @ RTX 5060 Laptop），先用 300 步验证链路：`steps: 300`，出片可听但音色差，属正常。

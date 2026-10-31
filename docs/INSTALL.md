@@ -64,15 +64,21 @@
 | ffmpeg | ✅ | `pip install imageio-ffmpeg`，并把路径写回配置 |
 | 旧版 RVC | ✅ | `git clone --depth 1 --branch <tag>`，再把本机已有权重复制进去 |
 | MSST 代码 + kim 权重 | ✅（--with-models） | clone 到 paths.msst_root；已有跳过；kim 约 871MB，断点续传/失败不中断 |
+| Applio | ✅（--install-applio 或 --install 链） | 固定 tag 3.7.1；git clone 失败回退 codeload zip；venv + torch + requirements；**需要 Python 3.11+**；约 3–5G/20–40 分钟 |
+| fairseq 0.12.2 | ✅（--install-fairseq 或 --install 链） | 预编译 zip + sha256；装到 paths.rvc_python 的 site-packages |
 | RVC hubert_base.pt + rmvpe.pt | ✅（--with-models） | 约 181MB + 173MB；已有跳过；URL 在 paths.model_sources，可配镜像 |
-| PyTorch + CUDA 轮子 | ❌ | 随显卡/驱动变，自己装（见下） |
-| Applio | ❌ | 自己 clone + pip |
+| PyTorch + CUDA 轮子 | ✅（--install 链 / `--install-torch`） | 按显卡 capability 自动选 cu128/cu121/cu118；`--yes` 真装 |
 | `room_ir.wav` | ❌ | 自备 IR |
 
-所以「全自动」覆盖：yt-dlp / ffmpeg / 旧版 RVC / MSST 代码 / MelBand kim / hubert / rmvpe；
-torch（按显卡选 cu 版本）和 Applio 仍需人工（torch 可用 setup --install-torch 一键）。
+所以「全自动」覆盖：torch（按显卡选 cu 版本）/ Applio / 旧版 RVC / fairseq / MSST 代码 / MelBand kim / hubert / rmvpe / yt-dlp / ffmpeg；
+只需要自备 Python 3.11（Applio）与 `room_ir.wav`（可选混响 IR）。
 **需要**：≥15G 空闲磁盘、能访问 PyPI / GitHub / HuggingFace（或配镜像）。
 AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_AI.md），它会自动找 profile、幂等注册插件并跑上面这条。
+
+### 已知问题（2026-10-31 实测）
+
+- **Applio 3.7.1 需要 Python 3.11+**：用路径 A 的 `--install-applio --python <3.10>` 时，git clone 被墙后 codeload 回退成功、venv 创建成功，但在 **33 秒 / 约 47MB** 时被版本门拒绝（requirements 的 numpy 2.4.6 仅支持 3.11+）。请用 3.11+ 解释器；本机 `D:/Apps/applio-env` 是 3.11.9。
+- **github.com:443 间歇不可达**：Applio 安装会自动回退 `codeload.github.com` 的固定 tag zip；两者都不通时只能配代理/镜像重试。
 
 ### 只装/重装 torch（先看命令，再加 --yes 真装）
 
@@ -94,7 +100,8 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 |---|---|---|---|---|---|
 | Python 3.10–3.12 | `python` | 跑 `engine/run.py` | ~30M | PSF | 需自备 |
 | PyTorch 2.x + CUDA 轮子 | `torch_cuda` | 训练 / 推理 | 2.5–3.5G | BSD-3 | ❌ 随显卡选 cuXXX，需自装（见下面「显卡与 torch 版本怎么选」） |
-| Applio | `applio` | RVC 预处理 + 训练 | 代码 ~300M + 预训练底模 ~1G | MIT | ❌ 自己 clone + pip |
+| Applio | `applio` | RVC 预处理 + 训练 | 代码 ~300M + 依赖 3–5G | MIT | ✅ `setup --install-applio --yes`（需 Python 3.11+） |
+| fairseq 0.12.2 | （old_rvc 检查） | 旧版 RVC 换声特征提取 | ~12M | MIT | ✅ `setup --install-fairseq --yes`（预编译包） |
 | MSST（MelBand-RoFormer） | `msst` | 人声/伴奏分离 | 代码 ~100M + kim 权重 ~1G | 代码 MIT；权重按模型页条款 | ⚠️ 代码可 clone，**权重自取** |
 | 旧版 RVC（`infer_cli`） | `old_rvc` | 换声推理（rmvpe/pitch） | ~200M | MIT | ✅ bootstrap 会 clone |
 | ffmpeg | `ffmpeg` | 混音、转 mp3、探测时长/响度 | 80–150M（imageio 自带 ~30M） | LGPL/GPL（构建而定） | ✅ bootstrap 会装 |
@@ -251,13 +258,21 @@ engine/vendor/applio/dsh_rvc2.py
 ### fairseq：只有“旧版 RVC 换声”需要
 
 **Applio 训练不需要 fairseq**（它用 transformers 加载 hubert/contentvec）。只有旧版 RVC（convert 阶段）要 `import fairseq`。
-Windows + Python 3.10 上没有官方 wheel，三种解法：
 
-1. **用 Applio 官方安装脚本**（`install.bat`），它自带依赖处理；
-2. **装 VS Build Tools 后源码编译**：`pip install fairseq==0.12.2 --no-build-isolation`；
-3. **从已有环境复制**：把另一台能跑 Applio 的机器的 `site-packages/fairseq` 整个目录复制到 Applio 的 `site-packages`（我们本机就是从 DDSP-SVC 环境复制的，实测可用）。
+**首选（自动）**：
 
-验证：`<applio_python> -c "import fairseq; print(fairseq.__version__)"`。
+    python engine/run.py setup --install-fairseq --yes
+
+- 预编译 Windows/py310 包（MIT，11.4MB，配置在 `paths.fairseq_zip_url/fairseq_zip_sha256`）；
+- 下载后校验 sha256，解压到 `paths.rvc_python` 的 site-packages，再 pip 装 omegaconf<2.1 / hydra-core<1.1 / sacrebleu / bitarray / regex / tqdm / cffi；
+- 目标解释器已能 `import fairseq` 时直接 skip；
+- 验证：`<rvc_python> -c "import fairseq; print(fairseq.__version__)"`。
+
+**手动 fallback（三条，按顺序试）**：
+
+1. 下载同一个预编译 zip，手动解压到 `<rvc_python>\Lib\site-packages`：https://github.com/LHL473962/dsh-cover-factory/releases/download/v0.1.11/fairseq-0.12.2-win-py310.zip
+2. **用 Applio 官方安装脚本**（`install.bat`），它自带依赖处理；
+3. **装 VS Build Tools 后源码编译**：`pip install fairseq==0.12.2 --no-build-isolation`；或从已有可用环境复制 `site-packages/fairseq`（最后手段）。
 
 ### 不装训练能不能用
 

@@ -311,11 +311,30 @@ def check_applio(cfg):
         missing.append("dsh_rvc2.py")
     if not _is_file(python):
         missing.append("applio python")
+    core_ok = False
+    transformers_ok = False
+    faiss_ok = False
+    if _is_file(python) and root and os.path.isdir(root):
+        rc, out = _run([python, "-c", "import core;print('ok')"], timeout=180, cwd=root)
+        core_ok = rc == 0
+        if not core_ok:
+            missing.append("import core（%s）" % (out.strip().splitlines() or ["失败"])[-1][:120])
+        rc2, out2 = _run([python, "-c", "import transformers;print(transformers.__version__)"], timeout=120, cwd=root)
+        transformers_ok = rc2 == 0
+        if not transformers_ok:
+            missing.append("transformers")
+        rc3, out3 = _run([python, "-c", "import faiss;print('ok')"], timeout=120, cwd=root)
+        faiss_ok = rc3 == 0
     ok = not missing
-    hint = ("git clone https://github.com/IAHispano/Applio；建独立 Python 3.10 env 并装 requirements；"
-            "paths.applio_root / paths.applio_python 指过去（dsh_rvc2.py 是本引擎的训练驱动）")
-    found = "Applio + dsh_rvc2.py" if ok else ("缺: " + "、".join(missing))
-    return {"name": "applio", "ok": ok, "found": found, "path": root, "hint": "" if ok else hint}
+    hint = ("补 Applio：python engine/run.py setup --install-applio --python <3.10解释器> --yes"
+            "（clone+venv+torch+requirements，约 3–5G/20–40 分钟）；"
+            "手工：git clone https://github.com/IAHispano/Applio，checkout 3.7.1，建 venv 后 pip install -r requirements.txt")
+    if ok:
+        found = "Applio + dsh_rvc2.py + import core ok；transformers ok" + ("" if faiss_ok else "；faiss 未装（可选）")
+    else:
+        found = "缺: " + "、".join(missing)
+    return {"name": "applio", "ok": ok, "found": found, "path": root,
+            "hint": "" if ok else hint, "faiss": faiss_ok}
 
 
 def check_old_rvc(cfg):
@@ -408,7 +427,7 @@ def check_fairseq(cfg):
         "name": "fairseq", "ok": False,
         "found": "缺 fairseq：" + "、".join(bad),
         "path": "",
-        "hint": "Windows 装 fairseq 三选一：① 用 Applio 自带 install.bat；② 装 VS Build Tools 后 pip install fairseq==0.12.2 --no-build-isolation；③ 从能跑的机器复制 site-packages/fairseq。详见 docs/INSTALL.md",
+        "hint": "首选 python engine/run.py setup --install-fairseq --yes（预编译 zip，sha256 校验）；还不行再手动下载同一 zip 解压到 site-packages，或用 Applio 安装脚本/VS Build Tools 编译（最后手段）。",
     }
 
 

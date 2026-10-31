@@ -294,21 +294,34 @@ doctor 的 `gpu_torch_match` 会带 `suggestedTorch`（按 capability 自动选�
 检查 + 尝试自动安装（进度走 stderr，最后 stdout 输出汇总 JSON；每步日志写 `engine/setup/setup.log`）：
 
     python engine/setup/bootstrap.py --check
-    python engine/setup/bootstrap.py --install
+    python engine/setup/bootstrap.py --install --with-models --yes
+
+单装某一项：
+
+    python engine/run.py setup --install-applio --python <Python 3.11> --yes   # Applio 训练器（约 3–5G / 20–40 分钟）
+    python engine/run.py setup --install-fairseq --yes                       # 旧版 RVC 换声要的 fairseq 0.12.2
+    python engine/run.py setup --install-torch --yes                         # 按显卡选 cu 版本
 
 | 依赖 | 能不能自动装 | 说明 |
 | --- | --- | --- |
-| Python 3.10+ | 手动 | python.org 安装；torch 环境建议独立 venv |
-| torch + CUDA | 自动（`setup --install-torch`，默认 dry-run）或手动 | 按显卡 capability 自动选 cu128/cu121/cu118；确认执行加 `--yes`，体积约 2.5–3G |
-| ffmpeg | 自动（pip imageio-ffmpeg）或手动 | bootstrap 装完会给出可执行文件路径，把它写进 `paths.ffmpeg`；失败则从 https://www.gyan.dev/ffmpeg/builds/ 下载 |
-| yt-dlp | 自动（pip，在 `paths.ytdlp_python` 环境里） | 只有 fetch search 抓取模式需要；import 模式不联网 |
-| MSST 代码 + MelBand kim 权重 | 代码可手动 clone；权重**不自动下** | `git clone https://github.com/ZFTurbo/Music-Source-Separation-Training`；权重按模型页/许可自行下载放 `pretrain/`，再配 `paths.msst_*` |
-| Applio | 手动 | `git clone https://github.com/IAHispano/Applio`，建独立 env 装 requirements，配 `paths.applio_root/applio_python` |
+| Python 3.10+（引擎）/ 3.11+（Applio） | 手动 | python.org 安装；Applio 3.7.1 的 numpy 2.4.6 只支持 3.11+，所以 Applio 用 3.11 venv |
+| torch + CUDA | 自动（--install 链 / setup --install-torch） | 按显卡 capability 自动选 cu128/cu121/cu118；--yes 真装，约 2.5–3G |
+| ffmpeg | 自动（pip imageio-ffmpeg）或手动 | bootstrap 装完会给出可执行文件路径，把它写进 paths.ffmpeg；失败则从 https://www.gyan.dev/ffmpeg/builds/ 下载 |
+| yt-dlp | 自动（pip，在 paths.ytdlp_python 环境里） | 只有 fetch search 抓取模式需要；import 模式不联网 |
+| MSST 代码 + MelBand kim 权重 | ✅（--with-models） | clone 到 paths.msst_root；kim 871MB、hubert 181MB、rmvpe 173MB，已存在跳过、断点续传 |
+| Applio | ✅ setup --install-applio --yes | clone 固定 tag 3.7.1（git 失败时回退 codeload zip）→ venv → torch（按显卡）→ requirements → import core 验证；约 3–5G / 20–40 分钟；需要 Python 3.11+ |
+| fairseq 0.12.2（旧版 RVC） | ✅ setup --install-fairseq --yes | 预编译 zip（MIT，11.4MB，sha256 校验）解压到 paths.rvc_python 的 site-packages，再装 omegaconf/hydra/sacrebleu 等 |
 | 旧版 RVC 2.2.231006 | 自动 clone + 拷本机权重 | `git clone --branch 2.2.231006 ...`；`hubert_base.pt`/`rmvpe.pt` 从 `paths.rvc_models_src` 递归找并复制；找不到会提示从 `https://huggingface.co/lj1995/VoiceConversionWebUI` 手动下载 |
 | 声库权重 / 分离权重 / 预训练底模 | 一律不自动下载 | 许可各异、体积大 |
 
 **为什么不能打包整个环境**：torch/CUDA 必须按显卡与驱动选版本；MSST/RVC/Applio 的模型许可各不相同；整套依赖 5–10G。
-所以引擎只做“体检 + 小件自动装 + 大件给命令”，大模型不替你下载。
+所以引擎做“体检 + pip/git 小件自动装 + 大权重按需下载”，不把环境塞进仓库。
+
+### 已知问题 / 实测失败点
+
+- **Applio 3.7.1 需要 Python 3.11+**：用 Python 3.10 建 venv 会在版本门直接失败（requirements 的 numpy 2.4.6 仅支持 3.11+）。请用 --python <3.11解释器>；本机已有 D:/Apps/applio-env 是 3.11.9，可作参考。
+- **github.com:443 间歇被墙**：Applio 的 git clone 失败时会自动回退到 codeload.github.com 的固定 tag zip；如果两者都不通，只能配代理/镜像后重试。
+- **实测（2026-10-31，临时 D:/VoiceData/exp/applio_test + Python 3.10）**：git clone 被墙后 codeload 回退成功（repo 26MB / 225 文件），venv 3.10 创建成功；**33 秒 / 47MB** 时在版本门失败（Applio 3.7.1 需要 Python>=3.11）。改用 3.11 才会进入 torch + requirements 阶段（约 3–5G / 20–40 分钟）。
 
 `paths` 覆盖（改 `config_default.json`，或用 `--config 覆盖.json`）：
 
