@@ -48,7 +48,8 @@ const ctx = {
 }
 
 import { doctorBlockCreate, normalizeDoctor, normalizeTorchSuggestion } from '../lib/doctor.js'
-import { buildJobConfig, classifyRefs, etaText, summarizeSelectReport } from '../lib/tools.js'
+import { buildJobConfig, classifyRefs, etaText, summarizeContributions, summarizeSelectReport } from '../lib/tools.js'
+import { normalizeName, resolveSingerAlias } from '../lib/aliases.js'
 import { isAlive } from '../lib/util.js'
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
@@ -217,7 +218,7 @@ await check('import 模式忽略 search/limit/copyrightAck（不因 limit=999 �
 
 await check('buildJobConfig：auto 模式 sources/options 正确', () => {
   const c = buildJobConfig({ singer: '测试', mode: 'auto', search: '周杰伦', limit: 5, copyrightAck: true, steps: 9000, shift: 0, outputDir: 'X' })
-  assert.deepEqual(c.sources, { search: '周杰伦', limit: 5, author: '测试' })
+  assert.deepEqual(c.sources, { search: '周杰伦', limit: 5, author: '测试', kinds: ['auto'] })
   assert.equal(c.options.copyrightAck, true)
   assert.equal(c.options.steps, 9000)
   const d = buildJobConfig({ singer: '测试', mode: 'auto', copyrightAck: false })
@@ -239,9 +240,115 @@ await check('eta 文案与实测一致：5000≈30 分钟 / 9000≈55 分钟 / 1
 
 await check('buildJobConfig：import 模式忽略 search/limit/copyrightAck', () => {
   const c = buildJobConfig({ singer: '测试', mode: 'import', folder: 'F', search: '周杰伦', limit: 3, copyrightAck: true, steps: 9000, shift: 2 })
-  assert.deepEqual(c.sources, { folder: 'F' })
+  assert.deepEqual(c.sources, { folder: 'F', kinds: ['folder'] })
   assert.equal(c.options.copyrightAck, undefined, 'import 不该写 copyrightAck')
   assert.equal(c.options.shift, 2)
+})
+
+await check('别名归一：normalizeName 处理全角/大小写/假名/连字符', () => {
+  assert.equal(normalizeName('Ｙｏｒｕｓｈｉｋａ'), 'yorushika')
+  assert.equal(normalizeName('Yorushika'), 'yorushika')
+  assert.equal(normalizeName('ヨルシカ'), 'yorushika')
+  assert.equal(normalizeName('よるしか'), 'yorushika')
+  assert.equal(normalizeName('Yoru-shika'), 'yorushika')
+  assert.equal(normalizeName('すい'), 'sui')
+})
+
+await check('多来源：sources 可多选，落盘组合形状 + kinds', () => {
+  const base = { singer: 'suis', steps: 9000, shift: 0, outputDir: 'O', refs: [] }
+  const single = buildJobConfig({ ...base, sources: ['folder'], folder: 'D:/x' })
+  assert.deepEqual(single.sources, { folder: 'D:/x', kinds: ['folder'] })
+  assert.equal(single.mode, 'import')
+
+  // 引擎认扁平组合（engine/README.md「多来源组合」）：folder / local_clients:true / search 同时给
+  const multi = buildJobConfig({ ...base, sources: ['folder', 'local'], folder: 'D:/x', clients: ['netease'] })
+  assert.deepEqual(multi.sources.kinds, ['folder', 'local'])
+  assert.equal(multi.sources.folder, 'D:/x')
+  assert.equal(multi.sources.local_clients, true)
+  assert.deepEqual(multi.sources.clients, ['netease'])
+  assert.equal(multi.sources.search, undefined, '没选 auto 不写 search')
+  assert.equal(multi.mode, 'import', '多来源落盘用引擎认的 import')
+
+  const all = buildJobConfig({ ...base, sources: ['folder', 'local', 'auto'], folder: 'D:/x', copyrightAck: true, keyword: '稻香' })
+  assert.deepEqual(all.sources.kinds, ['folder', 'local', 'auto'])
+  assert.equal(all.sources.search, 'suis')
+  assert.equal(all.sources.limit, 8)
+  assert.equal(all.sources.author, 'suis')
+  assert.equal(all.options.copyrightAck, true)
+  assert.equal(all.sources.keyword, '稻香')
+
+  // 旧 mode 仍兼容
+  assert.deepEqual(buildJobConfig({ ...base, mode: 'local' }).sources.kinds, ['local'])
+})
+
+await check('多来源：cover_setup 至少 1 个来源，0 个/非法值 -> BAD_SOURCES', async () => {
+  const empty = await call('cover_setup', { singer: '测试', sources: [] })
+  assert.equal(empty.error, 'BAD_SOURCES', JSON.stringify(empty))
+  assert.deepEqual(empty.allowed, ['folder', 'local', 'auto'])
+  const bad = await call('cover_setup', { singer: '测试', sources: ['folder', 'yolo'] })
+  assert.equal(bad.error, 'BAD_SOURCES')
+  assert.deepEqual(bad.bad, ['yolo'])
+  const ok = await call('cover_setup', { singer: '测试', sources: ['folder', 'local'], folder: HOME })
+  assert.equal(ok.error, 'ENGINE_NOT_READY', '多来源合法，只是引擎没就绪：' + JSON.stringify(ok))
+})
+
+await check('多来源：选了 folder 就必须给 folder', async () => {
+  const r = await call('cover_setup', { singer: '测试', sources: ['folder', 'local'] })
+  assert.equal(r.error, 'MISSING_FOLDER', JSON.stringify(r))
+})
+
+await check('别名解析：suis / 夜鹿 / ヨルシカ / Yorushika / すい 都命中 suis', () => {
+  for (const input of ['suis', '夜鹿', 'ヨルシカ', 'Yorushika', 'すい', 'スイ', 'YORUSHIKA']) {
+    const r = resolveSingerAlias(input)
+    assert.equal(r.canonical, 'suis', input + ' -> ' + JSON.stringify(r))
+    assert.ok(r.confidence >= 0.95, input + ' 置信度 ' + r.confidence)
+    assert.ok(['canonical', 'alias'].includes(r.matchedBy), input + ' matchedBy=' + r.matchedBy)
+  }
+})
+
+await check('别名解析：错拼 1-2 个字符仍命中（模糊匹配）', () => {
+  const r = resolveSingerAlias('sius')
+  assert.equal(r.canonical, 'suis', JSON.stringify(r))
+  assert.equal(r.matchedBy, 'fuzzy')
+  assert.ok(r.confidence > 0.5 && r.confidence < 0.95, '置信度应低于精确命中：' + r.confidence)
+  const r2 = resolveSingerAlias('yorushikaa')
+  assert.equal(r2.canonical, 'suis', JSON.stringify(r2))
+})
+
+await check('别名解析：没命中 -> canonical=输入、confidence=0、给 candidates', () => {
+  const r = resolveSingerAlias('totally-different-xyz')
+  assert.equal(r.canonical, 'totally-different-xyz')
+  assert.equal(r.confidence, 0)
+  assert.equal(r.matchedBy, 'none')
+  assert.ok(r.candidates.length >= 1, JSON.stringify(r))
+  assert.ok(r.candidates[0].canonical && r.candidates[0].distance > 0)
+})
+
+await check('preview contributions：读引擎组合报告 work/raw/fetch_report.json', () => {
+  const work = mkdtempSync(join(tmpdir(), 'cover-contrib-'))
+  try {
+    mkdirSync(join(work, 'work', 'raw'), { recursive: true })
+    writeFileSync(join(work, 'work', 'raw', 'fetch_report.json'), JSON.stringify({
+      mode: 'combined',
+      sources: {
+        folder: { status: 'ok', candidates: 3 },
+        local_clients: { status: 'failed', candidates: 0, error: '没有可用音频' },
+        search: { status: 'skipped', candidates: 0 },
+      },
+      counts: { folder: 3, local_clients: 0, search: 0, total: 3, candidates: 3, dropped: 0 },
+    }), 'utf8')
+    const c = summarizeContributions(work, { kinds: ['folder', 'local', 'auto'], folder: 'F', clients: ['netease'], keyword: 'suis' })
+    assert.deepEqual(c.sources, ['folder', 'local', 'auto'])
+    assert.equal(c.contributions.length, 3)
+    assert.equal(c.contributions[0].count, 3)
+    assert.equal(c.contributions[1].count, 0, '失败的来源也要有计数和 available')
+    assert.equal(c.contributions[1].available, true)
+    assert.ok(String(c.contributions[1].note).includes('没有可用音频'))
+    assert.equal(c.totalCandidates, 3, '总数取引擎 counts.total')
+    assert.equal(c.ready, true)
+  } finally {
+    rmSync(work, { recursive: true, force: true })
+  }
 })
 
 await check('refSearch：默认 false，job 配置里不出现 refSearch', () => {

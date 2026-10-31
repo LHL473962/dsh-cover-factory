@@ -26,15 +26,25 @@ cover_setup({ singer: "张三", folder: "<你的素材目录>", target: "<你的
 
 | 要给的东西 | 说明 |
 | --- | --- |
-| 歌手名 | 必填。决定声库名和成品文件名，例：张三 |
-| 素材目录 | import 模式必填。插件**只读**，不删不改 |
+| 歌手名 | 必填。决定声库名和成品文件名，例：张三。**支持别名与错拼**：suis / 夜鹿 / ヨルシカ / Yorushika / すい 都归一到 `suis`（返回 `resolvedSinger`，见 FAQ Q28） |
+| 素材来源（多选） | 至少选 1 个，可同时用：**本地目录**（要给 folder，只读）/ **本机客户端**（扫描已下载文件）/ **B站搜索**（要 `copyrightAck`） |
 | 好球曲（refs） | **选填**但强烈建议，2–8 首同歌手、同年代、干净独唱。每行可填**歌名**或**完整路径**（可混填）；歌名先在你给的素材目录里找，开了「联网搜索」并确认版权才去 B 站搜，仍找不到就忽略（不中断） |
 | 目标曲 | 要翻唱的那首，给完整文件路径。没给只能跑到训练，出不了成品 |
+| 本机客户端选项 | 选了「本机客户端」才用：`clients`（netease / qqmusic / kugou / kuwo，默认全部，`"qq"` 也认）、`keyword`（默认=归一后的歌手名） |
 | 目标歌手声部 | `auto`（默认，按目标曲人声判断）/ `female` / `male`。**男歌手请选 male**，或先用 auto 并确认判断正确 |
 | 步数 | 默认 9000；见 §3 |
-| 模式（素材从哪来） | `import` 导入目录（默认）/ `local` 本机音乐客户端已下载 / `auto` B 站联网抓取（需确认）。**后续还会加「链接导入」** |
+**素材来源现在可以组合**（新参数 `sources`，至少 1 个）：
 
-**音源方式一共四种**：① **目录导入**（`mode: "import"` + `folder`）② **本机客户端**（`mode: "local"`，扫描网易云/QQ音乐/酷狗/酷我**已下载**的文件，不需要账号、不需要登录态，只读）③ **B 站搜索**（`mode: "auto"`，要 `copyrightAck`）④ **链接导入**（规划中）。
+```
+sources: ["folder"]                 # 只用本地目录（= 旧 mode:"import"）
+sources: ["local"]                  # 只用本机客户端（= 旧 mode:"local"）
+sources: ["folder", "local"]        # 目录 + 本机客户端，一起当候选池
+sources: ["folder", "auto"]         # 目录 + B站搜索（要 copyrightAck）
+```
+
+- `mode` 旧参数仍然兼容（等价于单一来源），但**优先用 `sources`**；一个都没选返回 `BAD_SOURCES`。
+- 选了 **B站搜索** 必须带 `copyrightAck: true`，否则只返回 `needsConfirm`（不建 job、不联网）。
+- 落盘形状：单一来源沿用旧扁平形状；多来源是**扁平组合** `{folder, local_clients: true, clients, keyword, search, limit, author}` + `kinds` 标记（引擎按 folder → local_clients → search 顺序合并去重，见 `engine/README.md`「多来源组合」）。
 
 - 支持格式：wav / flac / mp3 / m4a / aac / ogg / opus / wma / aif / aiff / ape / wv；文件夹可以含子目录，会递归找。
 - 单曲 **≥60 秒**（不足会在智选阶段被排除）；目标曲 **≥30 秒**（质检硬门槛）。

@@ -24,16 +24,29 @@
 - **开始训练前提醒硬件风险**（一句话说完即可）：训练时显卡会跑满、显存约 7.5–8G，笔记本会发热降频；期间别开游戏/剪辑/渲染；请插电源、保散热；别中途关机（每 5 个 epoch 存盘，可用 resume 续训）；磁盘留 ≥10G；**显存 <5G 会先停下来让你选：减步数 或 加 --allow-lowmem**（5–8G 只警告）；没有可用 GPU 会走 CPU，慢约 10 倍；**RTX 50 系必须用 cu128 的 torch**（旧 torch 没有 sm_120 内核，跑不了）。
 - **移调**（shift，-5..+5 的整数，默认 0）：用户说「降两个 key」「升 2 个半音」时用，正=升高。这是**整首一起移**（人声+伴奏同比例），避免跑调；不要承诺「只把人声移调」——那是实验模式，v0.1 不开放。
 
-## 2. 素材从哪来：四种音源
+## 2. 素材从哪来：三种来源，可多选组合
 
-- **目录导入**（`mode: "import"` + `folder`，默认）：用户自己的文件夹，只读。
-- **本机客户端**（`mode: "local"`）：扫描网易云 / QQ音乐 / 酷狗 / 酷我**已下载**的文件。
+新参数是 **`sources` 数组（多选、至少 1 个）**：`["folder"]` / `["local"]` / `["auto"]`，也可以组合，例如 `["folder","local"]`、`["folder","auto"]`。旧的 `mode` 仍兼容（等价单一来源），但**优先用 `sources`**；一个都没选返回 `BAD_SOURCES`。不要替用户选来源：问清「要目录 / 本机已下载 / 联网搜 / 其中几个一起用」。
+
+- **目录导入**（`sources: ["folder"]` + `folder`）：用户自己的文件夹，只读；选了它就必须给 folder。
+- **本机客户端**（`sources: ["local"]`）：扫描网易云 / QQ音乐 / 酷狗 / 酷我**已下载**的文件。
   - 参数：`clients: ["netease"|"qqmusic"|"kugou"|"kuwo"]`（默认全部，`"qq"` 也认）、`keyword`（默认 = singer）。落盘时引擎侧是 `mode:"import" + sources.local_clients`，不用跟用户解释这个细节。
   - **不需要账号、不需要登录态、只读不修改**；ncm 自动解密，`qmc`/`kgm` 等加密格式要用户先手动转。
   - 用户说「用我电脑里下好的歌」就走这个，别让他手动找目录；非法客户端名会返回 `BAD_CLIENT`（返回里带 allowed）。
   - 建完看 `preview.localFetch`：`fileCount` + `formats` 是扫描结果；`fetch-pending` 说明还没跑 fetch。
-- **B 站搜索**（`mode: "auto"`）：联网抓取，必须先确认版权（见下一节）。
-- **链接导入**：规划中，v0.3 还没有；用户提就先说「暂时只支持前三种」。
+- **B 站搜索**（`sources: ["auto"]`）：联网抓取，必须先确认版权（见下一节）。
+- **链接导入**：规划中，v0.3 还没有；用户提就先说「暂时只支持这几种」。
+
+**多来源**：落盘是扁平组合（单来源沿用旧扁平形状；多来源是 `{folder, local_clients: true, clients, keyword, search, limit, author, kinds}`，引擎按 folder → local_clients → search 合并去重）。建完看 `preview.contributions`（每个来源各贡献几首，没跑的显示「等 fetch」）和 `totalCandidates` 总数，把「目录 N 首 + 本机 M 首，合计 X 首」讲给用户。
+
+## 2.1 歌手名别名 / 模糊匹配
+
+用户写的歌手名会**自动归一**（`cover_setup` 返回 `resolvedSinger`）：`suis` / `夜鹿` / `ヨルシカ` / `Yorushika` / `すい` 都 → `suis`；错 1–2 个字符（`sius`）也能命中（`matchedBy:"fuzzy"`，置信度 0.5–0.85）。关键词/搜索词默认用 **canonical**，声库名与成品名也用 canonical。
+
+- 拿到结果先看 `resolvedSinger`：`matchedBy` 是 `canonical/alias/contains/fuzzy` 且 `confidence` ≥0.8 时，**直接按归一后的名字继续，不用追问**，顺口说一句「按 suis 处理」即可。
+- `confidence` 0.5–0.8（fuzzy）时，说一句「我按 X 处理，不对就告诉我」，不要停下来等确认。
+- `matchedBy:"none"`（`confidence:0`）时 canonical 就是原名，同时返回 `candidates`（最近的几个 + distance）；把候选列给用户问一句「是不是其中某个」，但**不要因此不建 job**（原名也没问题）。
+- 用户明确纠正名字时，按用户说的写，别拿别名表硬套。
 
 ## 3. 抓取模式（mode: auto）：先给风险提示，等用户确认
 
@@ -47,8 +60,8 @@
 
 ## 4. 标准调用顺序
 
-1. cover_setup({ singer, refs, target, steps, mode, folder, clients, keyword, voice, shift, copyrightAck }) —— 拿 jobId、预筛预览（含 voiceGuess / localFetch）、eta、shiftNote；
-   抓取模式（mode:"auto"）必须带 copyrightAck:true，否则只回 needsConfirm 提示；本机客户端（mode:"local"）不需要 folder，也不需要账号。
+1. cover_setup({ singer, sources: ["folder"|"local"|"auto"...], refs, target, steps, folder, clients, keyword, voice, shift, copyrightAck }) —— 拿 jobId、resolvedSinger、预筛预览（含 contributions / totalCandidates / voiceGuess / localFetch）、eta、shiftNote；
+   sources 至少 1 个（多选可组合）；含 "auto" 时必须带 copyrightAck:true，否则只回 needsConfirm 提示；含 "local" 不需要 folder，也不需要账号。旧参数 mode 仍兼容。
 2. 把 jobId + 预计耗时 + 预筛结果复述给用户，再问一句「现在开始跑吗」。
 3. cover_run({ jobId }) —— 立刻返回 pid，不会阻塞。告诉用户「已经在后台跑了，可以关掉这轮对话」。
 4. 隔一阵 cover_status({ jobId }) 看进度。不要连发，也不要自己 sleep 循环；训完可能几小时。
@@ -90,6 +103,7 @@
   - BAD_LIMIT：抓取 limit 不在 1-50，给默认 8。
   - BAD_VOICE：voice 只认 auto / female / male；男歌手请改 male 再建 job。
   - BAD_CLIENT：clients 只认 netease / qqmusic / kugou / kuwo（或中文名、qq）；返回里的 allowed 就是可选值，转述给用户即可。
+  - BAD_SOURCES：sources 至少 1 个、只认 folder/local/auto；问用户要哪种来源（可多选），别自己默认成目录。
   - REF_NOT_FOUND / REF_TOO_MANY：好球曲路径不存在（按行号）或超过 20 条；让用户改路径或先留空。
   - BAD_DELETE_MODE：删除的 mode 只能是 soft（默认，可找回）或 purge（物理删除）。
   - DEPS_MISSING：依赖体检是红的，新建任务被拦了。把返回里的 missing/hints 转述给用户，按 docs/INSTALL.md 装完再体检。

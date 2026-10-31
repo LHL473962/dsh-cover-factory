@@ -9,11 +9,13 @@ sources 写法：
     {"search": "歌手名", "limit": 8, "author": "仅该作者"}      # search
     {"kind": "search", "query": "歌手名"}                      # 兼容插件旧字段
     {"local_clients": true, "clients": ["netease"], "keyword": "suis"}  # 本机客户端已下载
+    {"folder": "D:/新增", "local_clients": true, "search": "suis"}         # 多来源组合（folder→local→search）
 
 抓取前必须 options.copyrightAck=true（或 CLI --copyright-ack），否则 run.py 直接退 2。
 网络异常不中断：搜索超时 20s、重试 2 次；单条下载失败跳过并写进 work/raw/fetch_report.json。
 """
 
+import hashlib
 import html
 import http.cookiejar
 import json
@@ -1231,8 +1233,363 @@ def _run_search(job, cfg, sources):
     )
 
 
+# ------------------------------------------------------------------ 多来源组合
+
+FMT_RANK = {".flac": 5, ".ncm": 5, ".wav": 4, ".m4a": 3, ".mp3": 2}
+
+
+def _source_names(job, sources):
+    names = []
+    folder = str(sources.get("folder") or sources.get("dir") or sources.get("path") or "").strip()
+    if folder:
+        names.append("folder")
+    if sources.get("local_clients"):
+        names.append("local_clients")
+    if str(sources.get("search") or sources.get("query") or "").strip():
+        names.append("search")
+    return names
+
+
+def _norm_title(text):
+    t = os.path.splitext(os.path.basename(str(text or "")))[0]
+    t = re.sub(r"\[[^\]]*\]|\([^)]*\)|（[^）]*）|【[^】]*】", " ", t)
+    t = re.sub(r"[\s_\-.,，。!！?？:：;；·'\"“”‘’/\\|]+", "", t)
+    return t.lower() or "untitled"
+
+
+def _file_sha1(path):
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _quality(c):
+    ext = os.path.splitext(str(c.get("sourcePath") or c.get("tmp") or ""))[1].lower()
+    return (int(FMT_RANK.get(ext, 1)), int(c.get("size") or 0))
+
+
+def _probe_duration(ff, path):
+    try:
+        return float((audio.probe(ff, path) or {}).get("duration_sec") or 0.0)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _copy_source_report(sub, tag, reports_dir):
+    candidates = []
+    if tag == "search":
+        candidates.append("fetch_report.json")
+    elif tag == "local_clients":
+        candidates.append("local_client_report.json")
+    for name in candidates:
+        src = os.path.join(base.work(sub, "raw"), name)
+        if base.file_ok(src):
+            dst = os.path.join(reports_dir, tag + ".json")
+            try:
+                shutil.copy2(src, dst)
+            except OSError:
+                pass
+
+
+def _dedupe_candidates(candidates):
+    """返回 (kept, dropped)；路径 → 内容 sha1（按大小分组才哈希）→ 标题+时长。"""
+    dropped = []
+    by_path = {}
+    stage = []
+    for c in candidates:
+        key = _norm_path(c["sourcePath"]) if c.get("sourcePath") else ""
+        if key and key in by_path:
+            old = by_path[key]
+            if _quality(c) > _quality(old):
+                stage.remove(old)
+                dropped.append({"name": old["name"], "source": old["source"],
+                                "reason": "同一路径，保留更高质量的一份"})
+                by_path[key] = c
+                stage.append(c)
+            else:
+                dropped.append({"name": c["name"], "source": c["source"],
+                                "reason": "同一路径，保留更高质量的一份"})
+        else:
+            if key:
+                by_path[key] = c
+            stage.append(c)
+
+    # 内容 sha1：只对同 size 的组哈希，避免为所有文件读盘
+    size_groups = {}
+    for c in stage:
+        size_groups.setdefault(c["size"], []).append(c)
+    by_hash = {}
+    after_hash = []
+    for c in stage:
+        group = size_groups.get(c["size"]) or []
+        if len(group) > 1:
+            if not c.get("sha1"):
+                c["sha1"] = _file_sha1(c["tmp"])
+            key = c["sha1"]
+            if key in by_hash:
+                old = by_hash[key]
+                if _quality(c) > _quality(old):
+                    after_hash.remove(old)
+                    dropped.append({"name": old["name"], "source": old["source"],
+                                    "reason": "内容 sha1 相同，保留更高质量的一份"})
+                    by_hash[key] = c
+                    after_hash.append(c)
+                else:
+                    dropped.append({"name": c["name"], "source": c["source"],
+                                    "reason": "内容 sha1 相同，保留更高质量的一份"})
+            else:
+                by_hash[key] = c
+                after_hash.append(c)
+        else:
+            after_hash.append(c)
+
+    kept = []
+    for c in after_hash:
+        match = None
+        for k in kept:
+            if k["titleKey"] == c["titleKey"] and abs(k["duration"] - c["duration"]) < 3.0:
+                match = k
+                break
+        if match is None:
+            kept.append(c)
+        elif _quality(c) > _quality(match):
+            idx = kept.index(match)
+            kept[idx] = c
+            dropped.append({"name": match["name"], "source": match["source"],
+                            "reason": "同标题且时长差 <3s，保留质量更好的一份（%s）" % c["source"]})
+        else:
+            dropped.append({"name": c["name"], "source": c["source"],
+                            "reason": "同标题且时长差 <3s，保留质量更好的一份（%s）" % match["source"]})
+    return kept, dropped
+
+
+def _run_combined(job, cfg, sources):
+    """folder → local_clients → search；失败隔离、合并去重、分来源计数。"""
+    from assets import audio
+
+    names = _source_names(job, sources)
+    if len(names) < 2:
+        return None
+    raw_dir = base.work(job, "raw")
+    base.ensure_dir(raw_dir)
+    # 组合模式每次重建 raw ref/target，避免旧产物混入
+    for name in list(os.listdir(raw_dir)):
+        if name.endswith(".wav") and (name.startswith("ref_") or name.startswith("target_")):
+            try:
+                os.remove(os.path.join(raw_dir, name))
+            except OSError:
+                pass
+    merge_dir = os.path.join(raw_dir, "_merge_tmp")
+    shutil.rmtree(merge_dir, ignore_errors=True)
+    base.ensure_dir(merge_dir)
+    reports_dir = os.path.join(raw_dir, "source_reports")
+    base.ensure_dir(reports_dir)
+    for name in os.listdir(reports_dir):
+        if name.endswith(".json"):
+            try:
+                os.remove(os.path.join(reports_dir, name))
+            except OSError:
+                pass
+
+    ff = audio.find_ffmpeg(cfg.get("paths"))
+    target_src = _target_source(job)
+    target_key = _norm_path(target_src) if target_src else ""
+    candidates = []
+    warnings = []
+    source_info = {}
+
+    for tag in names:
+        subroot = os.path.join(base.work(job, "_fetch_sources"), tag)
+        shutil.rmtree(subroot, ignore_errors=True)
+        base.ensure_dir(os.path.join(subroot, "raw"))
+        sub = dict(job)
+        sub["_workdir"] = subroot
+        sub["songs"] = []
+        sub["refs"] = []
+        sub["warnings"] = []
+        sub["target"] = ""
+        sub["target_meta"] = None
+        status = "failed"
+        error = ""
+        try:
+            if tag == "folder":
+                res = _run_import(sub, cfg)
+            elif tag == "local_clients":
+                res = _run_local_clients(sub, cfg, sources)
+            else:
+                res = _run_search(sub, cfg, sources)
+            if isinstance(res, dict):
+                status = str(res.get("status") or "failed")
+                error = str(res.get("error") or res.get("reason") or "")
+        except Exception as exc:  # noqa: BLE001
+            status = "failed"
+            error = "%s: %s" % (type(exc).__name__, exc)
+
+        copied = 0
+        sub_songs = [s for s in (sub.get("songs") or []) if isinstance(s, dict) and s.get("role") == "ref"]
+        for idx, s in enumerate(sub_songs):
+            p = base.resolve(sub, s.get("path") or s.get("localPath") or "")
+            if not base.file_ok(p):
+                warnings.append("来源 %s 的素材文件不存在，已跳过：%s" % (tag, os.path.basename(p)))
+                continue
+            src_path = str(s.get("sourcePath") or s.get("source") or "")
+            if target_key and (_norm_path(p) == target_key or (src_path and _norm_path(src_path) == target_key)):
+                continue
+            dst = os.path.join(merge_dir, "%s_%02d_%s.wav" % (tag, idx + 1, _slug(os.path.basename(p))[:30]))
+            try:
+                shutil.copy2(p, dst)
+            except OSError as exc:  # noqa: BLE001
+                warnings.append("来源 %s 复制素材失败：%s" % (tag, exc))
+                continue
+            name = str(s.get("name") or os.path.splitext(os.path.basename(p))[0])
+            candidates.append({
+                "source": tag,
+                "name": name,
+                "tmp": dst,
+                "size": os.path.getsize(dst),
+                "sourcePath": src_path,
+                "kind": s.get("kind") or tag,
+                "bvid": s.get("bvid"),
+                "client": s.get("client"),
+                "format": s.get("format") or os.path.splitext(src_path or p)[1].lstrip("."),
+                "duration": _probe_duration(ff, dst),
+                "titleKey": _norm_title(name),
+                "sha1": "",
+            })
+            copied += 1
+
+        _copy_source_report(sub, tag, reports_dir)
+        if status == "needs_decision":
+            source_info[tag] = {"status": "skipped", "candidates": copied, "error": error}
+            warnings.append("来源 %s 跳过：%s" % (tag, error or "需要用户决策"))
+        elif status in ("failed",):
+            source_info[tag] = {"status": "failed", "candidates": copied, "error": error}
+            warnings.append("来源 %s 失败：%s" % (tag, error or "未知错误"))
+        elif copied == 0:
+            source_info[tag] = {"status": "empty", "candidates": 0, "error": error}
+        else:
+            source_info[tag] = {"status": "ok", "candidates": copied, "error": ""}
+        if status == "failed" and copied == 0:
+            base.log("fetch: 来源 %s 失败（继续其它来源）：%s" % (tag, error[:200]))
+        for w in (sub.get("warnings") or []):
+            if w and w not in warnings:
+                warnings.append(str(w))
+        shutil.rmtree(subroot, ignore_errors=True)
+
+    kept, dropped = _dedupe_candidates(candidates)
+    if len(candidates) != len(kept):
+        warnings.append("合并去重：候选 %d -> 保留 %d（丢弃 %d）" % (len(candidates), len(kept), len(candidates) - len(kept)))
+
+    order = {name: i for i, name in enumerate(names)}
+    kept.sort(key=lambda c: (order.get(c["source"], 99), c["name"]))
+    songs = []
+    source_to_out = {}
+    counts = {name: 0 for name in names}
+    for i, c in enumerate(kept, 1):
+        out = os.path.join(raw_dir, "ref_%02d_%s.wav" % (i, _slug(c["name"])[:40]))
+        try:
+            os.replace(c["tmp"], out)
+        except OSError as exc:  # noqa: BLE001
+            warnings.append("合并输出失败：%s" % exc)
+            continue
+        songs.append({
+            "id": "ref_%02d" % i,
+            "name": c["name"],
+            "role": "ref",
+            "kind": c.get("kind") or c["source"],
+            "path": base.rel(job, out),
+            "source": c.get("sourcePath") or c["source"],
+            "sourcePath": c.get("sourcePath") or "",
+            "sourceName": c["source"],
+            "durationSec": round(c["duration"], 2),
+            "format": c.get("format") or "",
+            "client": c.get("client") or "",
+            "bvid": c.get("bvid"),
+        })
+        counts[c["source"]] = counts.get(c["source"], 0) + 1
+        if c.get("sourcePath"):
+            source_to_out[_norm_path(c["sourcePath"])] = out
+        source_to_out[_norm_path(out)] = out
+
+    shutil.rmtree(merge_dir, ignore_errors=True)
+    job["songs"] = songs
+    target = _ensure_target(job, cfg, ff)
+
+    specs = _ref_specs(job)
+    pool = []
+    for c, song in zip(kept, songs):
+        src = c.get("sourcePath") or ""
+        raw = base.resolve(job, song["path"])
+        if src and os.path.isfile(src):
+            ref_path = src
+            names_for_ref = _pool_names(src) + [c["name"]]
+        else:
+            ref_path = raw
+            names_for_ref = [c["name"], os.path.splitext(os.path.basename(raw))[0]]
+        pool.append({"path": os.path.abspath(ref_path), "names": [n for n in names_for_ref if n]})
+    resolved, ref_warnings = _resolve_refs(job, cfg, specs, pool, False, False)
+    _attach_raw(job, resolved, source_to_out)
+    job["refs"] = resolved
+    for w in ref_warnings:
+        if w not in warnings:
+            warnings.append(w)
+
+    total = len(songs)
+    job["sources"] = dict(sources)
+    job["sources"]["used"] = list(names)
+    job["sources"]["counts"] = {name: counts.get(name, 0) for name in names}
+    job["sources"]["status"] = {name: source_info.get(name, {}).get("status", "failed") for name in names}
+    job["warnings"] = warnings
+
+    report_path = os.path.join(raw_dir, "fetch_report.json")
+    report = {
+        "version": 3,
+        "generatedAt": base.now_iso(),
+        "mode": "combined",
+        "sources": source_info,
+        "used": list(names),
+        "counts": dict(counts, total=total, candidates=len(candidates), dropped=len(dropped)),
+        "songs": songs,
+        "dropped": dropped,
+        "warnings": warnings,
+        "target": bool(target),
+        "params": {"sources": sources, "refs": specs},
+    }
+    base.write_json(report_path, report)
+    job["fetchReport"] = base.rel(job, report_path)
+
+    artifacts = [base.rel(job, report_path)] + [s["path"] for s in songs]
+    if target:
+        artifacts.append(target.get("audio") or "")
+    if not songs:
+        err = "所有来源都没取到素材：" + "；".join(
+            "%s=%s" % (n, source_info.get(n, {}).get("error") or source_info.get(n, {}).get("status"))
+            for n in names)
+        return base.result("failed", [base.rel(job, report_path)], dict(counts, total=0, mode="combined"),
+                           error=err)
+
+    base.log("fetch: 组合完成，保留 %d 首（folder=%d, local_clients=%d, search=%d，丢弃 %d）" % (
+        total, counts.get("folder", 0), counts.get("local_clients", 0), counts.get("search", 0), len(dropped)))
+    return base.result(
+        "done", [a for a in artifacts if a],
+        dict(counts, total=total, mode="combined", target=bool(target),
+             candidates=len(candidates), dropped=len(dropped)),
+        input_hash=base.sig(job, [], report["params"]),
+    )
+
+
 def run(job, cfg):
     sources = job.get("sources") or {}
+    names = _source_names(job, sources)
+    if len(names) >= 2:
+        res = _run_combined(job, cfg, sources)
+        if res is not None:
+            return res
     if _is_local_clients(sources):
         return _run_local_clients(job, cfg, sources)
     if _is_search(sources):

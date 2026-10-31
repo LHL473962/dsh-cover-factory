@@ -22,11 +22,17 @@ window.__ModuleLoader__.load({
     // 训练耗时：RTX 5060 Laptop 实测（约 0.37 秒/步）→ 5000≈30 分钟 / 9000≈55 分钟 / 18000≈1 小时 50 分
     const ETA = { 5000: '约 30 分钟', 9000: '约 55 分钟', 18000: '约 1 小时 50 分' }
     const ETA_HINT = '耗时按 RTX 5060 Laptop 实测（约 0.37 秒/步）；没有可用 GPU 会走 CPU，慢约 10 倍。'
-    const MODES = [
-      ['import', '导入目录'],
-      ['local', '本机客户端已下载'],
-      ['auto', '联网抓取（需确认）'],
+    // 素材来源：多选，至少 1 个
+    const SOURCES = [
+      ['folder', '本地目录'],
+      ['local', '本机客户端'],
+      ['auto', 'B站搜索'],
     ]
+    const SOURCE_HINT = {
+      folder: '自己准备好的素材文件夹（插件只读）',
+      local: '网易云 / QQ音乐等「已下载」的文件',
+      auto: '联网搜索并下载（需要版权确认）',
+    }
     const CLIENTS = [
       ['netease', '网易云音乐'],
       ['qqmusic', 'QQ音乐'],
@@ -128,7 +134,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('')
       const [form, setForm] = React.useState({
         singer: '', folder: '', target: '', refs: '',
-        steps: 9000, mode: 'import', copyrightAck: false, refSearch: false, voice: 'auto',
+        steps: 9000, sources: ['folder'], copyrightAck: false, refSearch: false, voice: 'auto',
         clients: ALL_CLIENTS.slice(), keyword: '',
       })
       // 风险提示默认收起
@@ -247,22 +253,28 @@ window.__ModuleLoader__.load({
           .split(/\r?\n/)
           .map((s) => s.trim())
           .filter(Boolean)
+        const picked = (form.sources || []).slice()
+        if (!picked.length) {
+          setBusy('')
+          setMsg('至少选 1 个素材来源：本地目录 / 本机客户端 / B站搜索（可多选）')
+          return
+        }
         const body = {
           singer: form.singer,
           target: form.target,
           steps: form.steps,
-          mode: form.mode,
+          sources: picked,
           refs: refLines,
         }
-        if (form.mode === 'import') body.folder = form.folder
-        if (form.mode === 'local') {
+        if (picked.includes('folder')) body.folder = form.folder
+        if (picked.includes('local')) {
           body.clients = (form.clients && form.clients.length ? form.clients : ALL_CLIENTS).slice()
           if (String(form.keyword || '').trim()) body.keyword = String(form.keyword).trim()
         }
         body.voice = form.voice || 'auto'
         body.refSearch = !!form.refSearch
-        // auto 抓取一直需要确认；import 只有要联网搜好球曲时才需要
-        if (form.mode === 'auto' || form.refSearch) body.copyrightAck = !!form.copyrightAck
+        // B站搜索一直需要确认；只用本地来源时，只有要联网搜好球曲才需要
+        if (picked.includes('auto') || form.refSearch) body.copyrightAck = !!form.copyrightAck
         try {
           const d = await jpost('/jobs/create', body)
           if (d.needsConfirm) {
@@ -271,6 +283,20 @@ window.__ModuleLoader__.load({
           } else if (d.ok) {
             // 预筛预览里若有逐首声部判断，直接列出来（看出为什么被排除）
             let extra = ''
+            // 歌手名归一提示
+            if (d.resolvedSinger && d.singer && d.singerInput && d.singer !== d.singerInput) {
+              extra += '\n歌手名已归一：' + d.singerInput + ' → ' + d.singer +
+                '（' + (d.resolvedSinger.matchedBy || '') + '，置信度 ' + (d.resolvedSinger.confidence != null ? d.resolvedSinger.confidence : '?') + '）'
+            }
+            // 每个来源各贡献几首 + 总候选数
+            const contribs = d.preview && Array.isArray(d.preview.contributions) ? d.preview.contributions : []
+            if (contribs.length) {
+              const parts = contribs.map((c) => (c.label || c.source) + '：' +
+                (typeof c.count === 'number' ? c.count + ' 首' : '等 fetch') +
+                (c.available === false ? '（' + (c.note || '未跑') + '）' : ''))
+              extra += '\n素材来源：' + (d.sources || []).map((s) => ({ folder: '本地目录', local: '本机客户端', auto: 'B站搜索' }[s] || s)).join(' + ') +
+                '\n各来源候选：' + parts.join('；') + '；合计 ' + (d.preview.totalCandidates || 0) + ' 首'
+            }
             const vg = d.preview && d.preview.voiceGuess
             if (vg && Array.isArray(vg.songs) && vg.songs.length) {
               const rows = vg.songs.slice(0, 8).map((s) =>
@@ -468,13 +494,31 @@ window.__ModuleLoader__.load({
             h('input', { style: S.input, value: form.singer, onChange: (e) => setForm(Object.assign({}, form, { singer: e.target.value })) }),
             h('div', { style: S.hint }, '例：刘德华；决定声库名与成品文件名'),
           ),
-          h('div', { style: S.field },
-            h('label', { style: S.label }, '模式'),
-            h('select', { style: S.input, value: form.mode, onChange: (e) => setForm(Object.assign({}, form, { mode: e.target.value, copyrightAck: false })) },
-              MODES.map((m) => h('option', { key: m[0], value: m[0] }, m[1])),
+          h('div', { style: { flex: '1 1 100%' } },
+            h('label', { style: S.label }, '素材来源（多选，至少 1 个）'),
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 4 } },
+              SOURCES.map(([id, label]) => h('label', { key: id, style: { display: 'flex', alignItems: 'flex-start', gap: 6, cursor: 'pointer' } },
+                h('input', {
+                  type: 'checkbox',
+                  checked: (form.sources || []).includes(id),
+                  onChange: (e) => {
+                    const cur = (form.sources || []).slice()
+                    const next = e.target.checked ? cur.concat([id]) : cur.filter((x) => x !== id)
+                    // 去掉 B站搜索时顺手清掉版权确认，避免残留
+                    const patch = { sources: next }
+                    if (!next.includes('auto') && !form.refSearch) patch.copyrightAck = false
+                    setForm(Object.assign({}, form, patch))
+                  },
+                }),
+                h('span', { style: { display: 'flex', flexDirection: 'column' } },
+                  h('span', { style: { color: '#E5E7EB', fontSize: 13 } }, label),
+                  h('span', { style: { color: '#64748B', fontSize: 11 } }, SOURCE_HINT[id]),
+                ),
+              )),
             ),
+            h('div', { style: S.hint }, '可以同时用多个来源（例如 本地目录 + 本机客户端）；至少选 1 个，否则服务端返回 BAD_SOURCES。'),
           ),
-          form.mode === 'local'
+          (form.sources || []).includes('local')
             ? h('div', { style: { flex: '1 1 100%' } },
               h('label', { style: S.label }, '扫描哪些本机客户端（默认全选）'),
               h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 4 } },
@@ -493,7 +537,7 @@ window.__ModuleLoader__.load({
               ),
             )
             : null,
-          form.mode === 'local'
+          (form.sources || []).includes('local')
             ? h('div', { style: S.field },
               h('label', { style: S.label }, '关键词（默认=歌手名）'),
               h('input', { style: S.input, value: form.keyword, onChange: (e) => setForm(Object.assign({}, form, { keyword: e.target.value })) }),
@@ -513,7 +557,7 @@ window.__ModuleLoader__.load({
             ),
             h('div', { style: S.hint }, '自动按目标曲人声判断；若素材被大量排除，请手动指定（男歌手建议直接选男声）。'),
           ),
-          form.mode === 'import'
+          (form.sources || []).includes('folder')
             ? h('div', { style: S.field },
               h('label', { style: S.label }, '素材目录（只读）'),
               h('input', { style: S.input, value: form.folder, onChange: (e) => setForm(Object.assign({}, form, { folder: e.target.value })) }),
@@ -559,24 +603,24 @@ window.__ModuleLoader__.load({
             form.refSearch
               ? h('div', { style: S.hint },
                 '本地素材目录里找不到的歌名，会去 B 站搜并下载；仍然失败就忽略（不会中断）。',
-                form.mode === 'import' ? h('span', { style: { color: '#F5A524' } }, ' 需要同时确认抓取风险：勾选下面的版权确认。') : null,
+                !(form.sources || []).includes('auto') ? h('span', { style: { color: '#F5A524' } }, ' 需要同时确认抓取风险：勾选下面的版权确认。') : null,
               )
               : h('div', { style: S.hint }, '默认只在你给的素材目录里找；勾选后才会联网补。'),
           ),
         ),
-        form.mode === 'local'
+        (form.sources || []).includes('local')
           ? h('div', { style: S.hint },
             '会自动扫描常见下载目录；ncm 自动解密；qmc / kgm 等加密格式需手动转换；只读取不修改原文件，不需要账号、不需要登录态。',
           )
           : null,
-        (form.mode === 'auto' || form.refSearch)
+        ((form.sources || []).includes('auto') || form.refSearch)
           ? h('label', { style: S.check },
             h('input', { type: 'checkbox', checked: !!form.copyrightAck, onChange: (e) => setForm(Object.assign({}, form, { copyrightAck: e.target.checked })) }),
-            h('span', null, (form.mode === 'auto'
-              ? '我确认：抓取会联网搜索并下载音频'
+            h('span', null, ((form.sources || []).includes('auto')
+              ? '我确认：B站搜索会联网搜索并下载音频'
               : '我确认：好球曲会联网搜索并下载音频') + '，可能触发平台风控，版权风险自负。不勾选只会得到风险提示，不会建 job、不会下载。'),
           )
-          : h('div', { style: S.muted }, '导入模式：素材来自你自己的文件夹，插件只读不删。'),
+          : h('div', { style: S.muted }, '素材来自你自己的文件夹 / 本机客户端已下载文件：插件只读不删，不会联网。'),
         h('div', { style: S.risk },
           h('button', {
             style: S.riskToggle,

@@ -183,14 +183,15 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 
 不想手动整理目录、也不想联网？用本机音乐客户端里**已下载**的文件：
 
-    cover_setup({ singer: "周杰伦", mode: "local", clients: ["netease", "qq"], keyword: "稻香", target: "D:/目标曲.wav" })
+    cover_setup({ singer: "周杰伦", sources: ["local"], clients: ["netease", "qq"], keyword: "稻香", target: "D:/目标曲.wav" })
 
 - 扫描网易云 / QQ音乐 / 酷狗 / 酷我的常见下载目录；`clients`（`netease` / `qqmusic` / `kugou` / `kuwo`，`"qq"` 也认）默认全部，`keyword` 默认 = 歌手名。
 - **不需要账号、不需要登录态、不联网**（除非你再开 `mode: "auto"` 抓取或 `refSearch`）；**只读，不修改原文件**。
 - 格式：常见音频都认；**ncm 自动解密**；`qmc` / `kgm` 等加密格式需要先手动转成 wav/flac/mp3，否则会被跳过。
 - 写进 job 配置：`mode: "import"` + `sources: { local_clients: true, clients: [...], keyword: "..." }`（引擎目前只认 mode=import/auto，靠 `sources.local_clients` 识别本机客户端）；非法客户端名返回 `BAD_CLIENT`。
 - 预筛预览里的 `localFetch` 会给扫描到的文件数与格式分布（`fileCount` / `formats`）；fetch 跑之前是 `fetch-pending`。
-- 音源方式一共四种：① 目录导入（`import`）② 本机客户端（`local`）③ B 站搜索（`auto`）④ 链接导入（规划中）。
+- 可以和其他来源组合：`sources: ["folder","local"]`（目录 + 本机客户端）或 `["local","auto"]`（本机 + B站搜索，需 `copyrightAck`）；每个来源各贡献几首会出现在 `preview.contributions`。
+- 素材来源三种、可多选组合：① 目录导入（`sources: ["folder"]` + folder）② 本机客户端（`sources: ["local"]`）③ B 站搜索（`sources: ["auto"]`，要 copyrightAck）；链接导入规划中。
 
 ## 素材怎么给（好球曲）
 

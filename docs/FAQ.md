@@ -249,7 +249,7 @@ v0.1 **不做和声生成，也不做声部分离**。
 
 ## Q26. 能直接用网易云 / QQ音乐里下载好的歌吗？
 
-能。建 job 时把 `mode` 设成 `local`（界面：「本机客户端已下载」）：
+能。建 job 时把本机客户端放进来源（`sources: ["local"]`，界面勾选「本机客户端」；旧写法 `mode: "local"` 仍兼容）：
 
 - **只读本地已下载的文件**：插件/引擎扫描客户端常见下载目录，不联网、**不需要账号、不需要登录态**，也不修改原文件。
 - 可选 `clients`（`netease` / `qqmusic` / `kugou` / `kuwo`，默认全部；`"qq"` 也认，会归一成 `qqmusic`）和 `keyword`（默认 = 歌手名）。
@@ -258,6 +258,36 @@ v0.1 **不做和声生成，也不做声部分离**。
 - 跑起来后，`cover_setup` 的预筛预览里 `localFetch` 会给出**扫描到的文件数**与**格式分布**（`fileCount` / `formats`）；fetch 还没跑时是 `fetch-pending`。
 
 想更可控就同时给 `refs`（歌名/路径都行）；只想用 QQ音乐 就传 `clients: ["qqmusic"]`。
+
+## Q27. 能不能同时用几个素材来源？
+
+能，**多选、至少 1 个**（新参数 `sources`）：
+
+```
+cover_setup({ singer: "suis", sources: ["folder", "local"], folder: "D:/素材/suis", clients: ["netease","qqmusic"] })
+cover_setup({ singer: "suis", sources: ["folder", "auto"], folder: "D:/素材/suis", copyrightAck: true })
+```
+
+- 一个都没选 → `BAD_SOURCES`（会带 `allowed: ["folder","local","auto"]`）。
+- 选了 `folder` 就必须给 `folder`（否则 `MISSING_FOLDER`）；选了 `auto` 就必须 `copyrightAck: true`（否则只回 `needsConfirm`，不建 job、不联网）。
+- 落盘：单一来源沿用旧扁平形状；多来源是**扁平组合** `sources: { folder, local_clients: true, clients, keyword, search, limit, author, kinds:[...] }`，引擎按 folder → local_clients → search 合并去重。
+- 预筛预览里 `preview.contributions` 会给出**每个来源各贡献几首**，`preview.totalCandidates` 是总数；fetch 没跑的来源显示 `available:false` / 「等 fetch」。
+- 旧参数 `mode` 仍可用（等价单一来源），但**优先用 `sources`**。
+
+## Q28. 歌手名写成别名 / 写错字会怎样？
+
+会**自动归一**到规范名（canonical），归一结果写进声库名、成品文件名，以及抓取/本机扫描的关键词：
+
+| 你写 | 归一为 | matchedBy |
+| --- | --- | --- |
+| `suis` | `suis` | `canonical`（置信度 1） |
+| `夜鹿` / `ヨルシカ` / `Yorushika` / `すい` / `スイ` | `suis` | `alias`（0.95） |
+| `suis 夜鹿`（带后缀） | `suis` | `contains`（0.8） |
+| `sius` / `yorushka`（错 1–2 个字符） | `suis` | `fuzzy`（0.5–0.85，距离越近越高） |
+
+- 返回值里看 `resolvedSinger: { input, canonical, matchedBy, confidence, candidates }`；界面会在结果区显示「歌手名已归一：夜鹿 → suis（alias，置信度 0.95）」。
+- **没命中**时：`canonical` = 你输入的原名、`confidence` = 0、`matchedBy` = `none`，并给出 `candidates`（编辑距离最近的几个，含 `distance`）供确认；按原名继续建 job，不会失败。
+- 别名表在 `lib/aliases.js`（`ALIAS_TABLE`），扩展就加一条；归一化会处理大小写、全半角、空格/连字符、片假名→平假名→罗马字。
 
 ## 附录：硬件与风险（训练期间必看）
 

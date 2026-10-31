@@ -149,6 +149,32 @@ job 配置（init 的 sources 字段）：
 - **只读取，不修改**：不重命名、不删除、不往客户端目录写任何文件；解密产物写在 job 的 `work/raw/_ncm/`。
 - ncmdump 安装：`python -m pip install ncmdump`（解释器配 `paths.ncmdump_python`），或提供 `ncmdump.exe`。
 
+## 多来源组合（folder + local_clients + search）
+
+`sources` 里可以同时给多个块，fetch 按 **folder → local_clients → search** 顺序执行并合并：
+
+    {
+      "sources": {
+        "folder": "D:/素材/新增",
+        "local_clients": true,
+        "keyword": "suis",
+        "search": "suis",
+        "limit": 8
+      }
+    }
+
+- 每个来源独立执行；单个来源失败只写 warning，其它来源继续；**所有来源都没取到素材才 exit 1**。
+- 合并去重：
+  - 同一路径（sourcePath 归一化）只留一份；
+  - 内容相同（同 size 再比文件 sha1）只留一份；
+  - 同一首歌（标题去括号/空白/标点后相同，且时长差 <3s）只留质量最好的一份（flac/wav > m4a > mp3）。
+- 报告：`work/raw/fetch_report.json`（mode=combined）含
+  `sources`（每来源 status/candidates/error）、`counts`（folder/local_clients/search/total/candidates/dropped）、`songs`、`dropped`、`warnings`；
+  原单来源报告另存 `work/raw/source_reports/<source>.json`。
+- `job.sources.used = ["folder","local_clients","search"]`，`job.sources.counts` 记录每个来源最终采用数；`job.fetchReport` 记报告路径。
+- search 关键词取 `sources.search`，缺省 `job.singer`；插件侧把 singer 解析成 canonical 后再传，引擎按该字符串搜索。
+- 组合里 search 未勾版权确认（options.copyrightAck）时只跳过 search 并 warning，不阻塞本地来源。
+
 ## 声库缓存 / 复用
 
 - 训练前算 fingerprint = sha1(素材文件 size+mtime + steps + 参考曲名集合)，存在 `work/model/<modelId>/model.json`。

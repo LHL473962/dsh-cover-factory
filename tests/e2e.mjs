@@ -398,6 +398,44 @@ await step('mode=local：config.sources 写 {local_clients:true, clients, keywor
   await call('cover_delete', { jobId: r2.jobId, mode: 'purge' })
 })
 
+await step('多来源：["folder","local"] 落盘组合 + 预筛 contributions，singer 归一 suis', async () => {
+  const src = join(ROOT, 'multi-src')
+  mkdirSync(src, { recursive: true })
+  writeFileSync(join(src, 'a.wav'), 'x')
+  const r = await call('cover_setup', {
+    singer: '夜鹿', sources: ['folder', 'local'], folder: src, clients: ['netease'], steps: 5000,
+  })
+  assert.equal(r.ok, true, JSON.stringify(r).slice(0, 600))
+  assert.equal(r.singer, 'suis', '别名要归一到 canonical')
+  assert.equal(r.singerInput, '夜鹿')
+  assert.equal(r.resolvedSinger.canonical, 'suis')
+  assert.equal(r.resolvedSinger.matchedBy, 'alias')
+  assert.deepEqual(r.sources, ['folder', 'local'])
+  assert.equal(r.mode, 'mixed', '多来源对外是 mixed')
+  const cfg = JSON.parse(readFileSync(r.config, 'utf8'))
+  assert.equal(cfg.mode, 'import')
+  assert.deepEqual(cfg.sources.kinds, ['folder', 'local'])
+  assert.equal(cfg.sources.folder, src)
+  assert.equal(cfg.sources.local_clients, true)
+  assert.deepEqual(cfg.sources.clients, ['netease'])
+  assert.equal(cfg.sources.keyword, 'suis', '关键词用 canonical')
+  assert.ok(Array.isArray(r.preview.contributions), JSON.stringify(r.preview).slice(0, 300))
+  assert.equal(r.preview.contributions.length, 2)
+  assert.equal(r.preview.contributions[0].source, 'folder')
+  assert.equal(typeof r.preview.totalCandidates, 'number')
+  await call('cover_delete', { jobId: r.jobId, mode: 'purge' })
+})
+
+await step('多来源：含 auto 但没勾版权 -> needsConfirm COPYRIGHT_ACK_REQUIRED', async () => {
+  const src = join(ROOT, 'multi-src')
+  const r = await call('cover_setup', { singer: 'suis', sources: ['folder', 'auto'], folder: src })
+  assert.equal(r.ok, true, JSON.stringify(r).slice(0, 400))
+  assert.equal(r.needsConfirm, true)
+  assert.equal(r.jobCreated, false)
+  assert.equal(r.reason, 'COPYRIGHT_ACK_REQUIRED')
+  assert.deepEqual(r.sources, ['folder', 'auto'])
+})
+
 await step('面板 /jobs/create：非法客户端 -> BAD_CLIENT', async () => {
   const r = await postJson('/jobs/create', { singer: '测试', mode: 'local', clients: ['spotify'] })
   assert.equal(r.json.ok, false, JSON.stringify(r.json))
