@@ -282,6 +282,7 @@ engine/vendor/applio/dsh_rvc2.py
 **首选（自动）**：
 
     python engine/run.py setup --install-rvc-deps --yes   # numpy/librosa/faiss/pyworld/parselmouth 等（不装 torch）
+    python engine/run.py setup --install-humming-asr --yes # 可选：faster-whisper + small，未装则 humming=auto 降级 F0
     python engine/run.py setup --install-fairseq --yes
 
 - 预编译 Windows/py310 包（MIT，11.4MB，配置在 `paths.fairseq_zip_url/fairseq_zip_sha256`）；

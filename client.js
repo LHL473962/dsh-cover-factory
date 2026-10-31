@@ -57,6 +57,14 @@ window.__ModuleLoader__.load({
       ['kim', 'kim（默认，推荐）'],
       ['bs317', 'bs317（串音更低，实验无听感提升）'],
     ]
+    // 哼唱段处理：auto 自动判断；keep 保留原声；replace AI 替换；mute 静音；manual 手动标注
+    const HUMMING_MODES = [
+      ['auto', '自动判断（推荐）'],
+      ['keep', '保留原声'],
+      ['replace', 'AI 替换'],
+      ['mute', '静音'],
+      ['manual', '手动标注（进阶）'],
+    ]
     const CLIENTS = [
       ['netease', '网易云音乐'],
       ['qqmusic', 'QQ音乐'],
@@ -162,6 +170,7 @@ window.__ModuleLoader__.load({
         // steps 的初值取 settings.defaultSteps（旧配置兼容），用户没手动改过才允许被设置值覆盖
         steps: 9000, stepsTouched: false,
         sources: ['folder'], copyrightAck: false, refSearch: false, voice: 'auto', separateModel: 'kim',
+        humming: 'auto', hummingSegments: '',
         clients: ALL_CLIENTS.slice(), keyword: '',
       })
       // 风险提示默认收起
@@ -311,6 +320,8 @@ window.__ModuleLoader__.load({
         }
         body.voice = form.voice || 'auto'
         body.separateModel = form.separateModel || 'kim'
+        body.humming = form.humming || 'auto'
+        if (body.humming === 'manual' && String(form.hummingSegments || '').trim()) body.hummingSegments = String(form.hummingSegments).trim()
         body.refSearch = !!form.refSearch
         // B站搜索一直需要确认；只用本地来源时，只有要联网搜好球曲才需要
         if (picked.includes('auto') || form.refSearch) body.copyrightAck = !!form.copyrightAck
@@ -611,6 +622,24 @@ window.__ModuleLoader__.load({
             ),
             h('div', { style: S.hint }, 'kim 是默认最稳的分离；bs317（BS-RoFormer ep317）串音指标更低，但实验结论是没有可测的听感提升——想试可以选，日常建议保持 kim。'),
           ),
+          h('div', { style: S.field },
+            h('label', { style: S.label }, '哼唱段处理'),
+            h('select', {
+              style: S.input,
+              value: form.humming || 'auto',
+              onChange: (e) => setForm(Object.assign({}, form, { humming: e.target.value })),
+            },
+              HUMMING_MODES.map(([id, label]) => h('option', { key: id, value: id }, label)),
+            ),
+            h('div', { style: S.hint }, '哼唱/无歌词段换声容易崩：自动=按转写结果判断并保留原声；保留原声=整段不换；AI 替换=全部换声；静音=只留伴奏。'),
+          ),
+          (form.humming === 'manual')
+            ? h('div', { style: S.field },
+              h('label', { style: S.label }, '哼唱标注 JSON（进阶）'),
+              h('input', { style: S.input, value: form.hummingSegments || '', onChange: (e) => setForm(Object.assign({}, form, { hummingSegments: e.target.value })) }),
+              h('div', { style: S.hint }, '用 engine/tools/humming_editor.html 拖选波形并导出 humming_segments.json，把路径填这里。'),
+            )
+            : null,
           (form.sources || []).includes('folder')
             ? h('div', { style: S.field },
               h('label', { style: S.label }, '素材目录（只读）'),

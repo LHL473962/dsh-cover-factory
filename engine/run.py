@@ -245,9 +245,9 @@ def cmd_init(args):
         return fail_json("BAD_MIX_PRESET", "options.mixPreset 只能是 old / new，收到：" + str(options.get("mixPreset")))
     if "mixPreset" in options:
         options["mixPreset"] = str(options["mixPreset"]).strip().lower()
-    hum = str(options.get("humming") or "keep").strip().lower()
-    if hum not in ("keep", "mute", "off", "manual"):
-        return fail_json("BAD_HUMMING", "options.humming 只能是 keep / mute / off / manual，收到：" + str(options.get("humming")))
+    hum = str(options.get("humming") or "auto").strip().lower()
+    if hum not in ("auto", "keep", "mute", "off", "manual"):
+        return fail_json("BAD_HUMMING", "options.humming 只能是 auto / keep / mute / off / manual，收到：" + str(options.get("humming")))
     options["humming"] = hum
     if "vocalDb" in options:
         try:
@@ -1042,6 +1042,8 @@ def cmd_setup(args):
         argv.append("--install")
     else:
         argv.append("--check")
+    if getattr(args, "install_humming_asr", False):
+        argv.append("--install-humming-asr")
     if getattr(args, "install_rvc_deps", False):
         argv.append("--install-rvc-deps")
     if getattr(args, "install_fairseq", False):
@@ -1119,6 +1121,8 @@ def main(argv=None):
                          help="下载 MSST 代码 + MelBand kim + hubert/rmvpe（默认 dry-run，--yes 才下载）")
     p_setup.add_argument("--install-torch", dest="install_torch", action="store_true",
                          help="按显卡 capability 安装对应 torch（默认 dry-run）")
+    p_setup.add_argument("--install-humming-asr", dest="install_humming_asr", action="store_true",
+                         help="可选：安装 faster-whisper + small 模型（默认 dry-run）")
     p_setup.add_argument("--install-rvc-deps", dest="install_rvc_deps", action="store_true",
                          help="安装旧版 RVC 运行依赖 numpy/librosa/faiss/pyworld/parselmouth 等（默认 dry-run）")
     p_setup.add_argument("--install-fairseq", dest="install_fairseq", action="store_true",

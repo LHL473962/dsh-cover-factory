@@ -126,28 +126,45 @@ def _asr_words(source, cache, model_name):
     return None, "faster-whisper 转写失败：" + "；".join(errors)
 
 
-def _f0_fallback_mask(source, n, ff):
-    """ASR 不可用：用 F0 置信度做保守 fallback（只把置信明显 voiced 的帧给换声）。"""
+def _f0_confidence_mask(source, n, ff):
+    """F0 置信度 fallback：conf < 0.12 的帧视为无歌词/哼唱，保留原声。"""
     try:
-        from assets import analysis
-        x = audio.decode(ff, source, 16000, 1)
-        f0 = analysis.f0_track(x, 16000, fmin=60.0, fmax=800.0, frame_sec=0.05, hop_sec=0.025)
-        if len(f0) == 0:
+        x = audio.decode(ff, source, 16000, 1).astype(np.float64)
+        frame = 800
+        hop = 400
+        if len(x) < frame:
             return np.zeros(n, dtype=np.float32), 0.0
-        voiced = np.isfinite(f0)
-        conf = float(voiced.mean()) if len(voiced) else 0.0
+        times = []
+        confs = []
+        for st in range(0, len(x) - frame + 1, hop):
+            seg = x[st:st + frame]
+            seg = seg - seg.mean()
+            rms = float(np.sqrt(np.mean(seg * seg)))
+            conf = 0.0
+            if rms > 0.005:
+                spec = np.fft.rfft(seg, n=2048)
+                ac = np.fft.irfft(spec * np.conj(spec), n=2048)[:frame]
+                if ac[0] > 1e-12:
+                    ac = ac / ac[0]
+                    lo, hi = 20, min(int(16000 / 60.0), frame - 1)
+                    if hi > lo:
+                        conf = float(np.max(ac[lo:hi]))
+            times.append(st / 16000.0)
+            confs.append(max(0.0, conf))
         m = np.zeros(n, dtype=np.float32)
-        if len(f0) > 1:
-            times = np.arange(len(f0)) * 0.025
-            idx = np.clip((times * SR).astype(int), 0, max(0, n - 1))
-            for i, v in enumerate(voiced):
-                if v:
-                    a = max(0, int(idx[i]))
-                    b = min(n, int(idx[i] + 0.05 * SR))
+        for t, c in zip(times, confs):
+            if c >= 0.12:
+                a = int(t * SR)
+                b = min(n, int((t + 0.05) * SR))
+                if b > a:
                     m[a:b] = 1.0
-        return _smooth(m, SMOOTH_KEEP), conf
+        return _smooth(m, SMOOTH_KEEP), (float(np.mean(confs)) if confs else 0.0)
     except Exception:
         return np.zeros(n, dtype=np.float32), 0.0
+
+
+def _f0_fallback_mask(source, n, ff):
+    return _f0_confidence_mask(source, n, ff)
 
 
 def main(argv=None):
@@ -155,7 +172,7 @@ def main(argv=None):
     ap.add_argument("--source", required=True, help="原始目标曲人声 stem")
     ap.add_argument("--converted", required=True, help="RVC 换声输出")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--mode", choices=("keep", "mute", "off", "manual"), default="keep")
+    ap.add_argument("--mode", choices=("auto", "keep", "mute", "off", "manual"), default="auto")
     ap.add_argument("--segments", default="", help="manual 标记 JSON：{segments:[{a,b,type}]}")
     ap.add_argument("--report", default="")
     ap.add_argument("--words-json", default="", help="测试/缓存：[[start,end],...]")
@@ -182,6 +199,10 @@ def main(argv=None):
               "fallback": False, "warning": "", "words": 0, "gain": 1.0,
               "keptRatio": 0.0, "hummingKeptRatio": 0.0}
     mask = np.zeros(n, dtype=np.float32)
+    effective = args.mode
+    report["hummingMode"] = args.mode
+    report["asrModel"] = ""
+    out = None
     if args.mode == "manual":
         segs = []
         if args.segments and os.path.isfile(args.segments):
@@ -214,24 +235,23 @@ def main(argv=None):
         out = (cv * keep[:, None] + src * (1.0 - keep)[:, None]) * mute[:, None]
         report["segments"] = len(segs)
         report["keptRatio"] = round(float((1.0 - keep).mean()), 4)
-        report["hummingKeptRatio"] = report["keptRatio"]
         report["manualFallback"] = bool(report.get("fallback"))
-    elif args.mode != "off":
+    elif args.mode == "off":
+        out = cv.copy()
+        report["keptRatio"] = 0.0
+    else:
         if args.words_json:
             words = _load_words(args.words_json)
-            if not words:
-                words, err = _asr_words(args.source, args.cache, args.whisper_model)
-            else:
-                err = ""
+            err = ""
+            asr_model = "words-json" if words else ""
         else:
             words, err = _asr_words(args.source, args.cache or "", args.whisper_model)
+            asr_model = args.whisper_model if words else ""
         if words is None:
-            report["fallback"] = True
-            report["warning"] = "WARN: " + (err or "ASR 不可用，F0 fallback") + "；使用 F0 置信度兜底"
-            mask, conf = _f0_fallback_mask(args.source, n, ff)
-            report["f0Confidence"] = round(float(conf), 4)
-            print(report["warning"], file=sys.stderr)
             words = []
+            report["fallback"] = True
+            report["warning"] = "WARN: " + (err or "ASR 不可用") + "；转 F0 置信度 fallback"
+            print(report["warning"], file=sys.stderr)
         report["words"] = len(words)
         for st, en in words:
             a = max(0, int((float(st) - PAD_SEC) * SR))
@@ -239,23 +259,40 @@ def main(argv=None):
             if b > a:
                 mask[a:b] = 1.0
         mask = _smooth(mask, SMOOTH_MUTE if args.mode == "mute" else SMOOTH_KEEP)
-    if args.mode == "manual":
-        pass
-    elif args.mode == "mute":
-        out = cv * mask[:, None]
-        report["keptRatio"] = 0.0
-    elif args.mode == "off":
-        out = cv.copy()
-        report["keptRatio"] = 0.0
-    else:
-        voiced = mask > 0.5
-        unvoiced = mask < 0.5
-        v_rms = _rms(cv[voiced]) if np.any(voiced) else 0.0
-        o_rms = _rms(src[unvoiced]) if np.any(unvoiced) else 0.0
-        gain = float(np.clip(v_rms / max(o_rms, 1e-9), 0.5, 2.0)) if o_rms > 0 else 1.0
-        out = cv * mask[:, None] + src * (gain * (1.0 - mask))[:, None]
-        report["gain"] = round(gain, 4)
-        report["keptRatio"] = round(float((1.0 - mask).mean()), 4)
+        kept = float((1.0 - mask).mean())
+        report["asrModel"] = asr_model
+        if args.mode == "auto":
+            if not (0.03 <= kept <= 0.35):
+                report["warning"] = ("WARN: ASR keptRatio %.1f%% 不在 3%%-35%%，转 F0 置信度 fallback" % (kept * 100))
+                print(report["warning"], file=sys.stderr)
+                mask, conf = _f0_confidence_mask(args.source, n, ff)
+                kept = float((1.0 - mask).mean())
+                report["f0Confidence"] = round(float(conf), 4)
+                report["asrModel"] = "f0"
+                report["fallback"] = True
+                if not (0.03 <= kept <= 0.35):
+                    effective = "off"
+                    report["warning"] += "；F0 仍不合格，降级 humming: off（全换声）"
+                    report["autoFallback"] = "off"
+                    print(report["warning"], file=sys.stderr)
+                    out = cv.copy()
+                    report["keptRatio"] = 0.0
+                else:
+                    report["autoFallback"] = "f0"
+        if out is None:
+            if args.mode == "mute":
+                out = cv * mask[:, None]
+                report["keptRatio"] = 0.0
+            else:
+                voiced = mask > 0.5
+                unvoiced = mask < 0.5
+                v_rms = _rms(cv[voiced]) if np.any(voiced) else 0.0
+                o_rms = _rms(src[unvoiced]) if np.any(unvoiced) else 0.0
+                gain = float(np.clip(v_rms / max(o_rms, 1e-9), 0.5, 2.0)) if o_rms > 0 else 1.0
+                out = cv * mask[:, None] + src * (gain * (1.0 - mask))[:, None]
+                report["gain"] = round(gain, 4)
+                report["keptRatio"] = round(float((1.0 - mask).mean()), 4)
+    report["hummingMode"] = effective
     report["hummingKeptRatio"] = report["keptRatio"]
     report["peak"] = round(float(np.max(np.abs(out))), 6) if len(out) else 0.0
     report["sourcePeak"] = round(float(np.max(np.abs(src))), 6) if len(src) else 0.0

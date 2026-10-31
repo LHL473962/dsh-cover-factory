@@ -66,7 +66,7 @@ def run(job, cfg):
         "protect": ccfg.get("protect", 0.33),
         "model": model_pth,
         "modelMtime": os.path.getmtime(model_pth),
-        "humming": str(opts.get("humming") or "keep").strip().lower(),
+        "humming": str(opts.get("humming") or "auto").strip().lower(),
         "hummingSegments": hum_seg_cfg,
     }
     target_vocals = base.work(job, "stems", stem, "vocals.wav")
@@ -135,7 +135,7 @@ def run(job, cfg):
         except Exception as exc:  # noqa: BLE001
             base.log("convert: 警告：人声电平对齐异常：%s" % exc)
 
-    hum_mode = str(opts.get("humming") or "keep").strip().lower()
+    hum_mode = str(opts.get("humming") or "auto").strip().lower()
     hum_report = base.work(job, "convert", "humming.json")
     hum_fallback = False
     hum_kept = None
@@ -145,7 +145,7 @@ def run(job, cfg):
         raw_seg = str(opts.get("hummingSegments") or "").strip()
         if raw_seg:
             hum_segments = raw_seg if os.path.isabs(raw_seg) else os.path.join(job.get("_workdir") or "", raw_seg)
-    if hum_mode in ("manual", "keep", "mute") and base.file_ok(target_vocals):
+    if hum_mode in ("auto", "manual", "keep", "mute") and base.file_ok(target_vocals):
         tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "tools", "humming_blend.py")
         py = paths.get("rvc_python") or sys.executable

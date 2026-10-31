@@ -534,6 +534,28 @@ def check_embedder(cfg):
             "path": target, "hint": ""}
 
 
+def check_humming_asr(cfg):
+    """可选：faster-whisper + small 模型缓存；缺了自动降级 F0，不算 doctor 失败。"""
+    paths = _paths(cfg)
+    py = paths.get("rvc_python") or ""
+    model_dir = os.path.expanduser("~/.dsh/cover-factory/models/faster-whisper-small")
+    hint = ("可选：python engine/run.py setup --install-humming-asr --yes（faster-whisper 1.2.1 + small 模型，"
+            "官方 HF 失败自动回退 hf-mirror，约 500MB）；未装时 humming=auto 自动降级 F0")
+    if not (py and _is_file(py)):
+        return {"name": "humming_asr", "ok": False, "optional": True,
+                "found": "paths.rvc_python 不可用", "path": py, "hint": hint}
+    rc, out = _run([py, "-c", "import faster_whisper;print(faster_whisper.__version__)"], timeout=120)
+    if rc != 0:
+        return {"name": "humming_asr", "ok": False, "optional": True,
+                "found": "faster_whisper 未安装", "path": py, "hint": hint}
+    if not (os.path.isdir(model_dir) and os.listdir(model_dir)):
+        return {"name": "humming_asr", "ok": False, "optional": True,
+                "found": "模型缓存未下载：" + model_dir, "path": model_dir, "hint": hint}
+    ver = (out.strip().splitlines() or [""])[-1]
+    return {"name": "humming_asr", "ok": True, "optional": True,
+            "found": "faster-whisper %s + model %s" % (ver, model_dir), "path": model_dir, "hint": ""}
+
+
 def check_fairseq(cfg):
     """训练/换声都依赖 fairseq（Applio 特征提取 + 旧版 RVC）。缺了会在训练/换声时炸，提前查。"""
     paths = _paths(cfg)
@@ -580,6 +602,7 @@ def run_checks(cfg):
         check_msst(cfg),
         check_applio(cfg),
         check_embedder(cfg),
+        check_humming_asr(cfg),
         check_fairseq(cfg),
         check_old_rvc(cfg),
         check_ytdlp(cfg),

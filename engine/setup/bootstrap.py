@@ -616,6 +616,55 @@ def install_rvc_deps(cfg, execute):
     return action("rvc_deps", "done", "RVC 运行依赖安装完成", py)
 
 
+HUM_ASR_MODEL_DIR = os.path.expanduser("~/.dsh/cover-factory/models/faster-whisper-small")
+
+
+def install_humming_asr(cfg, execute):
+    """可选：faster-whisper 1.2.1 + small 模型缓存（官方 HF 失败回退 hf-mirror）。"""
+    paths = cfg.get("paths") or {}
+    py = paths.get("rvc_python") or ""
+    if not py or not os.path.isfile(py):
+        return action("humming_asr", "failed", "paths.rvc_python 不可用: " + str(py), py,
+                      "先配 paths.rvc_python（3.10 环境）")
+    rc, out = run_cmd([py, "-c", "import faster_whisper;print(faster_whisper.__version__)"], timeout=120)
+    need_pkg = rc != 0
+    need_model = not (os.path.isdir(HUM_ASR_MODEL_DIR) and os.listdir(HUM_ASR_MODEL_DIR))
+    if not need_pkg and not need_model:
+        return action("humming_asr", "skipped", "faster-whisper + 模型缓存已就绪", HUM_ASR_MODEL_DIR)
+    if not execute:
+        return action("humming_asr", "skipped",
+                      "dry-run：加 --yes 安装 faster-whisper 并下载 small 模型到 " + HUM_ASR_MODEL_DIR,
+                      HUM_ASR_MODEL_DIR)
+    if need_pkg:
+        log("[humming_asr] pip install faster-whisper==1.2.1")
+        rc2, out2 = run_cmd([py, "-m", "pip", "install", "--disable-pip-version-check",
+                             "--retries", "10", "--timeout", "120", "faster-whisper==1.2.1"], timeout=1800)
+        if rc2 != 0:
+            return action("humming_asr", "failed", "faster-whisper 安装失败：%s" % out2[-400:], py,
+                          "手动：%s -m pip install faster-whisper==1.2.1" % py)
+    os.makedirs(HUM_ASR_MODEL_DIR, exist_ok=True)
+    code = ("from faster_whisper import WhisperModel;"
+            "WhisperModel('small', device='cpu', compute_type='int8', download_root=%r);"
+            "print('MODEL_OK')" % HUM_ASR_MODEL_DIR)
+    rc3, out3 = run_cmd([py, "-c", code], timeout=3600)
+    if rc3 != 0:
+        log("[humming_asr] 官方 HF 失败，回退 hf-mirror")
+        old = os.environ.get("HF_ENDPOINT")
+        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+        try:
+            rc3, out3 = run_cmd([py, "-c", code], timeout=3600)
+        finally:
+            if old is None:
+                os.environ.pop("HF_ENDPOINT", None)
+            else:
+                os.environ["HF_ENDPOINT"] = old
+    if rc3 != 0:
+        return action("humming_asr", "failed", "small 模型下载失败：%s" % out3[-400:], HUM_ASR_MODEL_DIR,
+                      "手动：%s -c \"from faster_whisper import WhisperModel; WhisperModel('small', download_root='%s')\""
+                      % (py, HUM_ASR_MODEL_DIR.replace("\\", "/")))
+    return action("humming_asr", "done", "faster-whisper + small 模型已安装", HUM_ASR_MODEL_DIR)
+
+
 FAIRSEQ_DEFAULT_URL = ("https://github.com/LHL473962/dsh-cover-factory/releases/download/"
                        "v0.1.11/fairseq-0.12.2-win-py310.zip")
 FAIRSEQ_DEFAULT_SHA = "8ba5a4af1354f69aa383ec12067f2b01d5f374bdceb7e0b78a900d033cf5b368"
@@ -1024,6 +1073,8 @@ def main(argv=None):
     parser.add_argument("--with-models", dest="with_models", action="store_true",
                         help="下载 MSST 代码 + MelBand kim + hubert/rmvpe（默认 dry-run，--yes 才下载）")
     parser.add_argument("--install-torch", action="store_true", help="按显卡 capability 安装对应 torch（默认 dry-run）")
+    parser.add_argument("--install-humming-asr", dest="install_humming_asr", action="store_true",
+                        help="可选：安装 faster-whisper + small 模型到 ~/.dsh/cover-factory/models（默认 dry-run）")
     parser.add_argument("--install-rvc-deps", dest="install_rvc_deps", action="store_true",
                         help="安装旧版 RVC 的 numpy/librosa/faiss 等运行依赖（默认 dry-run）")
     parser.add_argument("--install-fairseq", dest="install_fairseq", action="store_true",
@@ -1048,6 +1099,14 @@ def main(argv=None):
         payload, code = install_torch_mode(cfg, args)
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return code
+
+    if args.install_humming_asr:
+        step = install_humming_asr(cfg, bool(args.yes))
+        steps = [_normalize_step(step)]
+        payload = {"ok": all(s["status"] != "failed" for s in steps), "steps": steps,
+                   "nextSteps": _next_steps(steps)}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ok"] else 1
 
     if args.install_rvc_deps:
         step = install_rvc_deps(cfg, bool(args.yes))

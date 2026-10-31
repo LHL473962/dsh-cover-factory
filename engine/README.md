@@ -8,7 +8,7 @@
       run.py                 CLI（init / run / status / cancel / delete / doctor / setup）
       config_default.json    默认参数（模型路径、混音参数、QA 阈值）
       setup/                 依赖体检/安装
-        checks.py            doctor 的 11 项检查（含显卡/embedder/contentvec 实际 torch.load、Applio/fairseq）
+        checks.py            doctor 的 12 项检查（含显卡/embedder/contentvec 实际 torch.load、humming_asr、Applio/fairseq）
         bootstrap.py         --check / --install，日志写 setup/setup.log
       stages/                10 个 stage，每个暴露 run(job, cfg) -> dict
         base.py              日志 / subprocess / 幂等签名 / 路径约定
@@ -135,6 +135,17 @@ convert 完成后会先把换声人声 RMS 对齐目标 vocals（记录 `vocalAl
 
 A/B 匿名输出，bank 映射只写 `mapping.json` 不打印；先自检比例，不通过拒绝输出。
 
+### 哼唱段（humming）
+
+`job.options.humming`：`auto`（默认）/ `manual` / `keep` / `mute` / `off`。
+
+- **auto**：faster-whisper small（CPU int8，language 先 ja 再 None，word_timestamps）→ 词区间 ±0.15s 为 1 → scipy `fftconvolve` + Hann **1.2s** 平滑；保留段按 rms 比例 clamp(0.5,2.0) 对齐；
+  `keptRatio` 必须在 **3%–35%**，否则先试 F0 置信度（conf<0.12 视为哼唱），仍不合格则降级 `off`（全换声）+ WARN，不 fail。
+- **manual**：`options.hummingSegments` 指向 `{segments:[{a,b,type:'keep'|'mute'|'conv'}]}`；20ms 斜坡，keep 原声 / mute 静音 / conv 换声；缺 JSON 或无效时退化为全换声 + WARN。
+- **keep/mute/off**：保留旧行为（keep/mute 用 ASR 词时间，off 全换声）。
+
+report（convert/humming.json + metrics）记 `hummingMode` / `hummingKeptRatio` / `asrModel` / `fallback`；qa 不因哼唱 fail。
+可选 ASR：`python engine/run.py setup --install-humming-asr --yes`（faster-whisper + small → `~/.dsh/cover-factory/models/faster-whisper-small`；官方 HF 失败回退 hf-mirror）；未装时 doctor `humming_asr` 提示会自动降级 F0。
 ### 两套混音标准（old / new）
 
 `job.options.mixPreset` 显式指定 old/new；不写时按声库元数据自动：bs317 → new，kim → old。

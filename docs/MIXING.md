@@ -94,6 +94,14 @@ gain = (instActiveDb + targetDb) - vocalActiveDb
 > old 预设不走 auto-gain，保持 unity 原比例。
 
 
+## 哼唱段保留原声（humming）
+
+默认 `auto`：faster-whisper small 转写原人声 stem（ja 优先，失败 None；CPU int8），词区间 ±0.15s，Hann 1.2s + `scipy.signal.fftconvolve` 平滑；keep 段用 rms 比例对齐；`keptRatio` 3%–35% 为合格。
+不合格先走 F0 置信度（<0.12 视为哼唱），仍不合格降级全换声 + WARN，不 fail。
+
+`manual`：`job.options.hummingSegments` JSON `{segments:[{a,b,type:'keep'|'mute'|'conv'}]}`，20ms 斜坡；缺 JSON 退化为全换声并 WARN。
+
+注意：哼唱段用原声是为了避免 RVC 在无歌词段崩/断；不改变混音比例规则（old/new 仍按各自标准）。
 ## 两套混音标准（旧库 / 新库）
 
 | 项 | old（kim 声库） | new（bs317 声库） |
