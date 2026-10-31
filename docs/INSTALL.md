@@ -67,7 +67,7 @@
 |---|---|---|
 | yt-dlp | ✅ | `pip install -U yt-dlp`（抓取模式才用） |
 | ffmpeg | ✅ | `pip install imageio-ffmpeg`，并把路径写回配置 |
-| 旧版 RVC | ✅ | `git clone --depth 1 --branch <tag>`，再把本机已有权重复制进去 |
+| 旧版 RVC | ✅ | `git clone --depth 1 --branch <tag>` → 自动应用 `engine/vendor/rvc_patches`（torch>=2.6/PyAV/index 空兼容，备份 .orig）→ 复制本机权重 |
 | MSST 代码 + kim 权重 | ✅（--with-models） | clone 到 paths.msst_root；已有跳过；kim 约 871MB，断点续传/失败不中断 |
 | Applio | ✅（--install-applio 或 --install 链） | 固定 tag 3.7.1；git clone 失败回退 codeload zip；venv + torch + requirements；**需要 Python 3.11+**；实测 8.1G/676 秒，预留 10G |
 | fairseq 0.12.2 | ✅（--install-fairseq 或 --install 链） | 预编译 zip + sha256；装到 paths.rvc_python 的 site-packages |
@@ -108,7 +108,7 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 | Applio | `applio` | RVC 预处理 + 训练 | 实测 8.1G（代码 + torch + CUDA libs） | MIT | ✅ `setup --install-applio --yes`（需 Python 3.11+） |
 | fairseq 0.12.2 | （old_rvc 检查） | 旧版 RVC 换声特征提取 | ~12M | MIT | ✅ `setup --install-fairseq --yes`（预编译包） |
 | MSST（MelBand-RoFormer） | `msst` | 人声/伴奏分离 | 代码 ~100M + kim 权重 ~1G | 代码 MIT；权重按模型页条款 | ⚠️ 代码可 clone，**权重自取** |
-| 旧版 RVC（`infer_cli`） | `old_rvc` | 换声推理（rmvpe/pitch） | ~200M | MIT | ✅ bootstrap 会 clone |
+| 旧版 RVC（`infer_cli`） | `old_rvc` | 换声推理（rmvpe/pitch） | ~200M | MIT | ✅ bootstrap 会 clone 并自动打兼容补丁 |
 | ffmpeg | `ffmpeg` | 混音、转 mp3、探测时长/响度 | 80–150M（imageio 自带 ~30M） | LGPL/GPL（构建而定） | ✅ bootstrap 会装 |
 | rmvpe / hubert-base / f0G40k 底模 | （`old_rvc` 检查里） | 音高、内容特征、声码器 | 60M + 360M + 200M | MIT / 上游条款 | 随 RVC 权重复制 |
 | `room_ir.wav` | — | 卷积混响 IR（混音链） | <1M | 自备/免费 IR | ❌ 自备 |
@@ -170,14 +170,15 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 
 ### 为什么本仓库要打补丁
 
-只有在 **torch >= 2.6 上跑旧版 RVC**（也就是 50 系唯一可行的那条路）才需要这几处兼容：
+**torch >= 2.6（50 系必须）** 下旧版 RVC 会炸，需要这几处兼容：
 
-- `av`（PyAV）API 变更；
-- `torch.load` 默认 `weights_only=True`；
-- `index_root` 为空时的路径回退。
+- `av`（PyAV）API 变更（`av.open(path,'rb')` 失效）→ 改 ffmpeg 解码；
+- `torch.load` 默认 `weights_only=True` → 显式 `weights_only=False`；
+- `index_root` 为空 / index_path=None → 返回空字符串，允许空 index。
 
-**30 / 40 系用旧 torch（cu118 / cu121）时不需要这些补丁**，保持原版即可。
-这也是「同一份老 RVC 代码，50 系必须补、30/40 系不用补」的原因。
+补丁已随仓库分发：`engine/vendor/rvc_patches/`（6 个文件 + `apply.py`，MIT）。bootstrap clone 后自动应用，首次覆盖保留 `.orig`，幂等；30/40 用旧 torch 也可以应用（`weights_only` 参数兼容），所以同一套引擎代码 30/40/50 通吃。手动补救：
+
+    python engine/vendor/rvc_patches/apply.py <rvc_root>
 
 ### 一条命令自查
 

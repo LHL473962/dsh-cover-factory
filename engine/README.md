@@ -237,8 +237,23 @@ capability 的 `sm_XX` 不在 arch_list 里 = 这个 torch 轮子没有该卡的
 | **Intel 核显** | — | **不支持** | 同上；没有 NVIDIA 独显时 run 直接 exit 2 |
 | 无独显 | — | 不推荐（CPU 回退） | 约 10 倍慢；仍会警告后继续（与 A 卡/核显区分） |
 
-> 旧版 RVC（2.2.231006）的三处兼容补丁（`av` 依赖、`torch.load(..., weights_only=...)`、`index_root` 环境变量）
-> 在新旧 torch 下都兼容，所以**同一套引擎代码 30/40/50 通吃**（本机 old_rvc 已打补丁）。
+### 旧版 RVC 兼容补丁（torch >= 2.6 / 新 PyAV）
+
+bootstrap 的 `install_old_rvc` clone 官方 tag `2.2.231006` 后，会**自动运行**
+`engine/vendor/rvc_patches/apply.py` 覆盖 6 个补丁文件（首次覆盖前保留 `.orig`，幂等）。
+
+为什么需要：
+
+1. **新 PyAV**：`infer/lib/audio.py` 里 `av.open(path, 'rb')` 已失效；改为调用 ffmpeg 解码（`RVC_FFMPEG` 由引擎注入，缺省用 PATH）。
+2. **torch >= 2.6**：`torch.load` 默认 `weights_only=True`，RVC 的 rmvpe/模型权重加载失败；`rmvpe.py`、`jit/get_rmvpe.py`、`jit/get_synthesizer.py` 加 `weights_only=False`。
+3. **index 为空**：`index_root` 未设置时 `os.walk(None)` 崩溃；`infer/modules/vc/utils.py` 返回空串，`tools/infer_cli.py` 把 `None` index 归一成空串，允许空 index 换声。
+4. 同文件的 `av.open` 参数写法也同步到新 PyAV API。
+
+手动应用（或重装后补救）：
+
+    python engine/vendor/rvc_patches/apply.py <rvc_root>
+
+补丁文件与上游 RVC 2.2.231006 同源，按 MIT 分发；`engine/vendor/rvc_patches/LICENSE` 保留上游许可证。
 
 ### 自动识别 + 一键装对应 torch
 
@@ -317,7 +332,7 @@ Applio 安装会先按显卡装 torch/torchaudio，再把 requirements 里的 to
 | MSST 代码 + MelBand kim 权重 | ✅（--with-models） | clone 到 paths.msst_root；kim 871MB、hubert 181MB、rmvpe 173MB，已存在跳过、断点续传 |
 | Applio | ✅ setup --install-applio --yes | clone 固定 tag 3.7.1（git 失败时回退 codeload zip）→ venv → torch（按显卡）→ requirements → import core 验证；需要 Python 3.11+；**实测 8.1G / 676 秒**（网络快），建议预留 10G |
 | fairseq 0.12.2（旧版 RVC） | ✅ setup --install-fairseq --yes | 预编译 zip（MIT，11.4MB，sha256 校验）解压到 paths.rvc_python 的 site-packages，再装 omegaconf/hydra/sacrebleu 等 |
-| 旧版 RVC 2.2.231006 | 自动 clone + 拷本机权重 | `git clone --branch 2.2.231006 ...`；`hubert_base.pt`/`rmvpe.pt` 从 `paths.rvc_models_src` 递归找并复制；找不到会提示从 `https://huggingface.co/lj1995/VoiceConversionWebUI` 手动下载 |
+| 旧版 RVC 2.2.231006 | 自动 clone + 打补丁 + 拷本机权重 | clone 后自动应用 `engine/vendor/rvc_patches`（torch>=2.6/PyAV/index 空兼容，备份 .orig）；`hubert_base.pt`/`rmvpe.pt` 从 `paths.rvc_models_src` 递归复制 |
 | 声库权重 / 分离权重 / 预训练底模 | 一律不自动下载 | 许可各异、体积大 |
 
 **为什么不能打包整个环境**：torch/CUDA 必须按显卡与驱动选版本；MSST/RVC/Applio 的模型许可各不相同；整套依赖 5–10G。

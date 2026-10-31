@@ -174,18 +174,36 @@ def install_ffmpeg(cfg):
     return action("ffmpeg", "manual", "装上了 imageio-ffmpeg 但没找到 ffmpeg 可执行文件", "", manual)
 
 
+def _apply_rvc_patches(root):
+    apply_script = os.path.join(ENGINE_DIR, "vendor", "rvc_patches", "apply.py")
+    if not os.path.isfile(apply_script):
+        return "RVC 补丁目录缺失: " + apply_script, False
+    rc, out = run_cmd([sys.executable, apply_script, root], timeout=300)
+    tail = "\n".join((out or "").strip().splitlines()[-3:])
+    return tail, rc == 0
+
+
 def install_old_rvc(cfg):
     before = checks.check_old_rvc(cfg)
     if before.get("ok"):
-        return action("old_rvc", "already", before.get("found"), before.get("path"))
+        patch_detail, patch_ok = _apply_rvc_patches(before.get("path") or "")
+        if not patch_ok:
+            return action("old_rvc", "failed", "已存在但补丁应用失败：" + patch_detail,
+                          before.get("path") or "", "手动运行 python engine/vendor/rvc_patches/apply.py <rvc_root>")
+        return action("old_rvc", "already", before.get("found") + "；" + patch_detail,
+                      before.get("path"))
     paths = cfg.get("paths") or {}
     root = paths.get("rvc_root") or ""
     if not root:
         return action("old_rvc", "manual", "paths.rvc_root 为空", "", before.get("hint") or "")
     if os.path.isdir(root) and os.listdir(root):
+        patch_detail, patch_ok = _apply_rvc_patches(root)
+        if not patch_ok:
+            return action("old_rvc", "failed", "补丁应用失败：" + patch_detail, root,
+                          "手动运行 python engine/vendor/rvc_patches/apply.py <rvc_root>")
         copied, missing = _copy_rvc_weights(cfg, root)
         after = checks.check_old_rvc(cfg)
-        detail = "目录已存在，跳过 clone；复制本机权重 %d 个" % len(copied)
+        detail = "目录已存在，跳过 clone；" + patch_detail + "；复制本机权重 %d 个" % len(copied)
         if missing:
             detail += "；仍缺: " + "、".join(missing)
         status = "installed" if after.get("ok") else "manual"
@@ -200,9 +218,13 @@ def install_old_rvc(cfg):
         return action("old_rvc", "failed", "git clone %s 失败（网络/代理？）" % OLD_RVC_TAG, root,
                       before.get("hint") or "")
     run_cmd(["git", "-C", root, "checkout", OLD_RVC_TAG], timeout=300)
+    patch_detail, patch_ok = _apply_rvc_patches(root)
+    if not patch_ok:
+        return action("old_rvc", "failed", "clone 成功但补丁应用失败：" + patch_detail, root,
+                      "手动运行 python engine/vendor/rvc_patches/apply.py <rvc_root>")
     copied, missing = _copy_rvc_weights(cfg, root)
     after = checks.check_old_rvc(cfg)
-    detail = "git clone %s 完成；复制本机权重 %d 个" % (OLD_RVC_TAG, len(copied))
+    detail = "git clone %s 完成；%s；复制本机权重 %d 个" % (OLD_RVC_TAG, patch_detail, len(copied))
     if missing:
         detail += "；仍缺: " + "、".join(missing)
     status = "installed" if after.get("ok") else "manual"

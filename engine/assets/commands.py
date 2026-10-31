@@ -117,6 +117,8 @@ def rvc_env(cfg, model_dir):
     env = _child_env()
     env["weight_root"] = model_dir
     env["index_root"] = model_dir
+    # 补丁后的 infer/lib/audio.py 用 ffmpeg 解码；把引擎配置的 ffmpeg 注入
+    env["RVC_FFMPEG"] = _path(cfg, "ffmpeg") or "ffmpeg"
     return env
 
 
