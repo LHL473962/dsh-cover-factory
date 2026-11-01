@@ -42,3 +42,7 @@ dsh.profile.bundles，再调用 engine/setup/bootstrap.py --install --with-model
 - **抓取模式**默认关闭：开启后下载音频的版权风险由使用者自行承担。
 - 训练耗时（RTX 5060 Laptop 实测，约 0.37 秒/步）：5000 步≈30 分钟、9000 步≈55 分钟、18000 步≈1 小时 50 分；没有可用 GPU 会走 CPU，慢约 10 倍；显存 <5G 会先停下来让你选（减步数 / --allow-lowmem）。
 - 混音遵循铁律：人声/伴奏都用 stem 原始电平，不拉平；出片前过 preflight。
+
+## 效果可能不佳的情况
+
+见 docs/LIMITATIONS.md（术曲、男女对唱、混响不一致、哼唱多、和声重、音域宽）。
