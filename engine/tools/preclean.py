@@ -21,23 +21,26 @@ def _run(step, in_dir, out_dir):
         raise RuntimeError(step["model_type"] + " failed: " + (r.stderr or r.stdout)[-400:])
 
 def _find_vocals(out_dir):
+    """不同模型的输出名不同：vocals / noreverb / denoised…，按优先级取第一个"""
     hits = []
     for root, _, files in os.walk(out_dir):
         for f in files:
-            if f.lower().startswith("vocals") and f.lower().endswith(".wav"):
+            if f.lower().endswith(".wav"):
                 hits.append(os.path.join(root, f))
+    priority = ("noreverb", "denoised", "vocals")
+    hits.sort(key=lambda p: next((i for i, k in enumerate(priority) if os.path.basename(p).lower().startswith(k)), 99))
     return hits
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--in", required=True); ap.add_argument("--out", required=True)
+    ap.add_argument("--in", dest="in_dir", required=True); ap.add_argument("--out", required=True)
     ap.add_argument("--dereverb", action="store_true", default=True)
     ap.add_argument("--denoise", action="store_true", default=True)
     ap.add_argument("--no-dereverb", dest="dereverb", action="store_false")
     ap.add_argument("--no-denoise", dest="denoise", action="store_false")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    src_dir = a.in
+    src_dir = a.in_dir
     tmp = tempfile.mkdtemp(prefix="preclean_")
     cur = src_dir
     steps = []

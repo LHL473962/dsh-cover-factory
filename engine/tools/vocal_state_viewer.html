@@ -1,0 +1,82 @@
+<!doctype html><meta charset="utf-8"><title>人声状态校对</title>
+<style>
+body{background:#0d1120;color:#e8ecf6;font:13px "Microsoft YaHei";padding:14px;max-width:1200px}
+h1{font-size:18px;margin:0 0 6px}.sub{color:#8a96b4;margin-bottom:10px}
+.card{background:#151b2d;border:1px solid #26304a;border-radius:10px;padding:10px;margin-bottom:10px}
+button{background:#3b6cff;color:#fff;border:0;border-radius:7px;padding:6px 11px;margin:4px 4px 0 0;cursor:pointer}
+button.gray{background:#252f47}
+#timeline{width:100%;height:90px;background:#0b1020;border:1px solid #26304a;border-radius:8px;cursor:pointer;display:block}
+#info{color:#9fb0d0;margin-top:6px;white-space:pre-wrap}
+.legend span{display:inline-block;margin-right:12px;font-size:12px}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
+audio{width:100%;margin-top:8px}
+</style>
+<h1>人声状态校对</h1><div class="sub">载入人声状态 JSON + 音频；点击波形切换该段标签（normal → breathy → humming → silence）</div>
+<div class="card">
+<label>状态 JSON <input type="file" id="fjson" accept=".json"></label>
+<label>音频 <input type="file" id="faudio" accept="audio/*"></label>
+<button onclick="load()">载入</button>
+<button class="gray" onclick="exportJson()">导出修正 JSON</button>
+<span id="msg"></span>
+</div>
+<div class="card">
+<canvas id="timeline"></canvas>
+<div class="legend">
+<span><i class="sw" style="background:#3b6cff"></i>normal</span>
+<span><i class="sw" style="background:#eab308"></i>breathy</span>
+<span><i class="sw" style="background:#22c55e"></i>humming</span>
+<span><i class="sw" style="background:#475569"></i>silence</span>
+</div>
+<audio id="au" controls></audio>
+<div id="info">未载入</div>
+</div>
+<script>
+let data=null, dur=0, sel=null;
+const COLORS={normal:'#3b6cff',breathy:'#eab308',humming:'#22c55e',silence:'#475569'};
+const cv=document.getElementById('timeline'), c2=cv.getContext('2d');
+function msg(t){document.getElementById('msg').textContent=t}
+async function load(){
+ const fj=document.getElementById('fjson').files[0];
+ const fa=document.getElementById('faudio').files[0];
+ if(!fj){msg('先选 JSON');return}
+ data=JSON.parse(await fj.text());
+ dur=data.duration||Math.max(...data.segments.map(s=>s.b));
+ if(fa){const au=document.getElementById('au');au.src=URL.createObjectURL(fa)}
+ draw(); msg('已载入 '+data.segments.length+' 段，时长 '+dur.toFixed(1)+'s');
+}
+function draw(){
+ const W=cv.width=cv.clientWidth*devicePixelRatio, H=cv.height=90*devicePixelRatio;
+ c2.clearRect(0,0,W,H);
+ if(!data)return;
+ for(const s of data.segments){
+  const x0=s.a/dur*W, x1=s.b/dur*W;
+  c2.fillStyle=COLORS[s.state]||'#64748b';
+  c2.fillRect(x0,H*0.25,Math.max(1,x1-x0),H*0.5);
+ }
+ if(sel!==null){const s=data.segments[sel];const x0=s.a/dur*W,x1=s.b/dur*W;c2.strokeStyle='#fff';c2.lineWidth=2;c2.strokeRect(x0,H*0.2,Math.max(2,x1-x0),H*0.6);}
+ document.getElementById('info').textContent = sel===null?'点击某段选中':('选中 '+data.segments[sel].a.toFixed(2)+' → '+data.segments[sel].b.toFixed(2)+'s  '+data.segments[sel].state);
+}
+cv.onclick=e=>{
+ if(!data)return;
+ const W=cv.clientWidth, t=e.offsetX/W*dur;
+ let idx=data.segments.findIndex(s=>t>=s.a&&t<s.b);
+ if(idx<0)return;
+ sel=idx; draw();
+ // 单击选中，双击切换
+};
+cv.ondblclick=e=>{
+ if(!data)return;
+ const W=cv.clientWidth, t=e.offsetX/W*dur;
+ let idx=data.segments.findIndex(s=>t>=s.a&&t<s.b);
+ if(idx<0)return;
+ const order=['normal','breathy','humming','silence'];
+ const cur=order.indexOf(data.segments[idx].state);
+ data.segments[idx].state=order[(cur+1)%order.length];
+ draw();
+};
+function exportJson(){
+ if(!data)return;
+ const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+ const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='vocal_state_corrected.json';a.click();
+}
+</script>

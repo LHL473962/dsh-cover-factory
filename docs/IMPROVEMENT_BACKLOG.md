@@ -91,3 +91,41 @@
 - `engine/tools/regression.py`：回归集运行与基线对比（阈值见脚本）
 - `engine/tools/preclean.py`：训练前去混响+去噪（A1）
 - `engine/tools/auto_gain.py --metric lufs`：感知响度口径（C2）
+
+
+## 2026-11-01 结论更新
+- **48k（110e / 9130 步）**：人声平坦度 +44%（カタオモイ）、LOA 仅 +4%；8–16k 仍低于 40k；盲听无清亮度差异，个别断音略好。
+  → 不作为默认；保留为用户可选的训练采样率（`train.sampleRate: 40000|48000`），文档注明“数据源 44.1k 时无真实高频收益”。
+- **B1 Resemble-Enhance**：评估不推荐（高频突增帧 0.8%、8–16k 反降、开头噪声）。
+- **A1 去混响/去噪**：正在跑（9 首 → 重训 40k 9k 步 → LOA 控制变量对比）。
+
+
+## A1 实测结果（2026-11-01，LOA 控制变量）
+- 训练素材先去混响+去噪 → 重训 40k 9000 步
+- 人声谱平坦度 0.0033 → **0.0201（6×）**，接近原声 0.0164
+- 人声 4–8k **+1.72 dB**；成品 4–8k +1.01 dB
+- 8–16k 仍 −0.75 dB（下一步）
+- 结论：**A1 确定保留，作为默认推荐流程**
+
+
+## 流程新增：素材音域覆盖检查（2026-11-01）
+
+训练前必须跑：
+
+```
+python engine/tools/range_check.py --target <目标曲人声.wav> --materials <素材目录>
+```
+
+- 输出每首 p5/p50/p95 与合并覆盖
+- 判定：素材 p95 ≥ 目标 p95 + 20 Hz 且 p5 ≤ 目标 p5 − 20 Hz 才算 OK
+- FAIL 时不允许直接训练：先补高音区素材（禁止用 pitch augmentation 硬扩，会改音色）
+
+
+## 素材搜索 + 自动音域分析（2026-11-01，已进流程）
+
+- 工具：`engine/tools/material_finder.py`
+  - 扫描本地库（mp3/flac/wav/**ncm 自动解密**）
+  - 可选 `--bvid`：用 yt-dlp 下载 B 站音频
+  - 逐个 bs317 分离 → 算 p5/p50/p95 → 排序，标出是否补足目标音域
+- 训练闸：`train.py::_range_gate`，素材 p95 不足目标（默认 +20Hz）直接 `RANGE_COVERAGE_FAIL`，除非 `options.allowRangeFail=true`
+- 用户不需要自己筛选素材

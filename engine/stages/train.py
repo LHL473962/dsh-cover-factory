@@ -278,6 +278,39 @@ def steps_of(job, cfg, epochs=None):
     return int(round(float(epochs or target_epochs(job, cfg)) * est))
 
 
+def _range_gate(job, cfg, dataset_dir):
+    """训练前音域覆盖闸：素材 p95 必须覆盖目标曲 p95。"""
+    opts = job.get("options") or {}
+    if opts.get("allowRangeFail") is True:
+        return None
+    tcfg = cfg.get("train") or {}
+    if tcfg.get("range_gate") is False:
+        return None
+    target = None
+    for root, _, files in os.walk(os.path.join(base.workdir(job), "stems")):
+        for f in files:
+            if f.lower() == "vocals.wav":
+                target = os.path.join(root, f)
+                break
+        if target:
+            break
+    if not target or not os.path.isdir(dataset_dir):
+        return None
+    tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "range_check.py")
+    margin = float(tcfg.get("range_margin_hz", 20))
+    try:
+        r = subprocess.run([sys.executable, tool, "--target", target, "--materials", dataset_dir,
+                            "--margin", str(margin), "--json"], capture_output=True, text=True, timeout=600)
+        data = json.loads(r.stdout or "{}")
+    except Exception:
+        return None
+    if data.get("verdict") == "FAIL":
+        cov = data.get("coverage") or {}
+        need = data.get("required") or {}
+        raise RuntimeError("RANGE_COVERAGE_FAIL: 素材 p95=%s Hz，目标需要 >=%s Hz；请补高音区素材或设 options.allowRangeFail=true" % (cov.get("p95"), need.get("p95")))
+    return data
+
+
 def material_fingerprint(job, cfg, epochs=None):
     """sha1(素材文件 size+mtime + steps + 参考曲名集合)。"""
     h = hashlib.sha1()
@@ -288,6 +321,9 @@ def material_fingerprint(job, cfg, epochs=None):
             continue
         h.update(("%s|%d|%d;" % (os.path.basename(path), st.st_size, st.st_mtime_ns)).encode("utf-8"))
     h.update(("steps=%d;" % steps_of(job, cfg, epochs)).encode("utf-8"))
+    _opts = job.get("options") or {}
+    _epochs_fp = _opts.get("epochs") or epochs or target_epochs(job, cfg)
+    h.update(("epochs=%s;" % _epochs_fp).encode("utf-8"))
     h.update(("refs=%s" % ",".join(_ref_names(job))).encode("utf-8"))
     return h.hexdigest()
 
@@ -516,6 +552,7 @@ def run(job, cfg):
         base.log("train: 已有 %d epoch 权重（%s），达到目标 %d epoch，跳过训练"
                  % (latest[1][0], os.path.basename(latest[0]), epochs))
     else:
+        _range_gate(job, cfg, ds_dir)
         base.log("train: 开始训练 %d epoch（%s）" % (epochs, "断点续训" if resumed else "从头开始"))
         res = base.run_cmd(
             commands.applio_cmd(cfg, "train", epochs),
