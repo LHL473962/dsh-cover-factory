@@ -45,4 +45,4 @@ dsh.profile.bundles，再调用 engine/setup/bootstrap.py --install --with-model
 
 ## 效果可能不佳的情况
 
-见 docs/LIMITATIONS.md（术曲、男女对唱、混响不一致、哼唱多、和声重、音域宽）。
+见 docs/LIMITATIONS.md（术曲、男女对唱、合唱、混响不一致、哼唱多、和声重、音域宽）。
