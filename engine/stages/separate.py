@@ -223,6 +223,43 @@ def _stem_check(job, cfg, plan, model_id):
     return report, path, overall, warnings
 
 
+def _range_gate(job, cfg, plan):
+    """分离完成后立刻做音域覆盖检查：素材人声 p95 必须覆盖目标曲。"""
+    opts = job.get("options") or {}
+    if opts.get("allowRangeFail") is True:
+        return None
+    scfg = cfg.get("separate") or {}
+    if scfg.get("range_gate") is False:
+        return None
+    target_name = _target_name(job)
+    tgt = next((x for x in plan if x.get("name") == target_name), None)
+    if not tgt or not base.file_ok(tgt.get("vocals", "")):
+        return None
+    mats = [x["vocals"] for x in plan if x is not tgt and base.file_ok(x.get("vocals", ""))]
+    if not mats:
+        return None
+    tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "range_check.py")
+    margin = float(scfg.get("range_margin_hz", 20))
+    try:
+        r = subprocess.run([sys.executable, tool, "--target", tgt["vocals"], "--materials"] + mats +
+                            ["--margin", str(margin), "--json"], capture_output=True, text=True, timeout=900)
+        data = json.loads(r.stdout or "{}")
+    except Exception:
+        return None
+    job["range_check"] = {
+        "target": data.get("target"), "coverage": data.get("coverage"),
+        "required": data.get("required"), "verdict": data.get("verdict"),
+    }
+    if data.get("verdict") == "FAIL":
+        cov = data.get("coverage") or {}
+        need = data.get("required") or {}
+        raise RuntimeError(
+            "RANGE_COVERAGE_FAIL: 素材人声 p95=%s Hz，目标需要 >=%s Hz（%s）；"
+            "请补高音区素材（可用 engine/tools/material_finder.py 自动搜索分析），"
+            "或设 options.allowRangeFail=true" % (cov.get("p95"), need.get("p95"), tgt.get("name")))
+    return data
+
+
 def run(job, cfg):
     raw_dir = base.work(job, "raw")
     stems_dir = base.work(job, "stems")
@@ -313,6 +350,11 @@ def run(job, cfg):
             error="STEMS_SWAPPED：人声/伴奏 stem 疑似接反；" + "；".join(warnings[:3]),
         )
 
+    try:
+        _range_gate(job, cfg, plan)
+    except RuntimeError as exc:
+        return base.result("failed", [base.rel(job, p) for p in outs] + [base.rel(job, check_path)],
+                           {"songs": len(plan), "model": model_id, "stemCheck": verdict}, error=str(exc))
     base.log("separate: 完成 %d 首（%d 个 stem，模型=%s，stem_check=%s）" % (
         len(plan), len(outs), model_id, verdict))
     return base.result(

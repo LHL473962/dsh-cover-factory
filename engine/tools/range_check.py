@@ -23,19 +23,20 @@ def stats(p):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True)
-    ap.add_argument("--materials", required=True, help="目录或单个 wav")
+    ap.add_argument("--materials", required=True, nargs="+", help="目录或若干 wav")
     ap.add_argument("--margin", type=float, default=20.0, help="要求素材 p95 ≥ 目标 p95 + margin Hz")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
     mats = []
-    if os.path.isdir(a.materials):
-        for p in glob.glob(a.materials + "/**/*.wav", recursive=True):
-            if os.path.basename(p).lower().startswith(("vocals", "vocal", "dry", "noreverb")):
-                mats.append(p)
-        if not mats:
-            mats = glob.glob(a.materials + "/**/*.wav", recursive=True)
-    else:
-        mats = [a.materials]
+    for src in a.materials:
+        if os.path.isdir(src):
+            hits = [p for p in glob.glob(src + "/**/*.wav", recursive=True)
+                    if os.path.basename(p).lower().startswith(("vocals", "vocal", "dry", "noreverb"))]
+            mats.extend(hits or glob.glob(src + "/**/*.wav", recursive=True))
+        elif os.path.isfile(src):
+            mats.append(src)
+    if not mats:
+        print("素材为空"); sys.exit(2)
     target = stats(a.target)
     rows = []
     for p in mats:

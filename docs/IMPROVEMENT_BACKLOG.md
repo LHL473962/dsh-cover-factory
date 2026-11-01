@@ -129,3 +129,12 @@ python engine/tools/range_check.py --target <目标曲人声.wav> --materials <�
   - 逐个 bs317 分离 → 算 p5/p50/p95 → 排序，标出是否补足目标音域
 - 训练闸：`train.py::_range_gate`，素材 p95 不足目标（默认 +20Hz）直接 `RANGE_COVERAGE_FAIL`，除非 `options.allowRangeFail=true`
 - 用户不需要自己筛选素材
+
+
+## 音域覆盖进入主流程（2026-11-01 晚）
+
+- 位置：`separate` 阶段末尾（分离完成后立刻检查，不再等到 train）
+- 逻辑：目标曲人声 vs 素材人声 p95/p5，不足 → `RANGE_COVERAGE_FAIL`，任务在分离阶段停止
+- 关闭：`separate.range_gate=false` 或 `options.allowRangeFail=true`
+- 余量：`separate.range_margin_hz`（默认 20）
+- 补素材：`engine/tools/material_finder.py`（本地库 ncm 解密 / B 站 BV 下载 → 分离 → 分析 → 排序）
