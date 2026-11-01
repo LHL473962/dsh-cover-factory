@@ -620,7 +620,7 @@ window.__ModuleLoader__.load({
             },
               SEPARATE_MODELS.map(([id, label]) => h('option', { key: id, value: id }, label)),
             ),
-            h('div', { style: S.hint }, 'kim 是默认最稳的分离；bs317（BS-RoFormer ep317）串音指标更低，但实验结论是没有可测的听感提升——想试可以选，日常建议保持 kim。'),
+            h('div', { style: S.hint }, 'kim 是默认最稳的分离；bs317（BS-RoFormer ep317）串音更低、听感更好，代价是人声会显得更远（距离感），可用混音/近场补偿。想要更干净的声库建议开 bs317。'),
           ),
           h('div', { style: S.field },
             h('label', { style: S.label }, '哼唱段处理'),

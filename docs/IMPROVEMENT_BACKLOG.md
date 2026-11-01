@@ -138,3 +138,8 @@ python engine/tools/range_check.py --target <目标曲人声.wav> --materials <�
 - 关闭：`separate.range_gate=false` 或 `options.allowRangeFail=true`
 - 余量：`separate.range_margin_hz`（默认 20）
 - 补素材：`engine/tools/material_finder.py`（本地库 ncm 解密 / B 站 BV 下载 → 分离 → 分析 → 排序）
+
+
+## 口径修正（2026-11-01）
+
+- bs317 并非“听感无提升”：它串音更低、听感更好，副作用是人声变远；默认仍 kim（稳），追求干净时用 bs317 并在混音做近场补偿。
