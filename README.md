@@ -51,3 +51,8 @@ dsh.profile.bundles，再调用 engine/setup/bootstrap.py --install --with-model
 ## 对话成本
 
 插件本机执行不耗 token；对话轮次才消耗。估算见 docs/TOKEN_COST.md（安装 5–15 万，跑一首 2–5 万）。
+
+
+## 本地音库导入
+
+支持导入 RVC .pth（不需要训练）；Synthesizer V 官方音库不可导入。见 docs/VOICE_BANK_IMPORT.md。
