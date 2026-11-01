@@ -46,3 +46,8 @@ dsh.profile.bundles，再调用 engine/setup/bootstrap.py --install --with-model
 ## 效果可能不佳的情况
 
 见 docs/LIMITATIONS.md（术曲、男女对唱、合唱、混响不一致、哼唱多、和声重、音域宽）。
+
+
+## 对话成本
+
+插件本机执行不耗 token；对话轮次才消耗。估算见 docs/TOKEN_COST.md（安装 5–15 万，跑一首 2–5 万）。
