@@ -253,7 +253,7 @@ v0.1 **不做和声生成，也不做声部分离**。
 
 - **只读本地已下载的文件**：插件/引擎扫描客户端常见下载目录，不联网、**不需要账号、不需要登录态**，也不修改原文件。
 - 可选 `clients`（`netease` / `qqmusic` / `kugou` / `kuwo`，默认全部；`"qq"` 也认，会归一成 `qqmusic`）和 `keyword`（默认 = 歌手名）。
-- 常见格式都认；**ncm 会自动解密**；`qmc` / `kgm` 等加密格式需要你先手动转成 wav/flac/mp3。
+- 常见音频格式都认；**加密/专有格式的可用性取决于本机是否已有解析组件**，插件不提供也不分发这类工具；无法解析的文件会被跳过。
 - 写进 job 配置的是 `mode: "import"` + `sources: { local_clients: true, clients: [...], keyword: "..." }`（引擎靠 `sources.local_clients` 识别，`mode` 只认 import/auto）；非法客户端名返回 `BAD_CLIENT`（会列出可选项）。
 - 跑起来后，`cover_setup` 的预筛预览里 `localFetch` 会给出**扫描到的文件数**与**格式分布**（`fileCount` / `formats`）；fetch 还没跑时是 `fetch-pending`。
 

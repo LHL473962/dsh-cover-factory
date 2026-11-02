@@ -701,7 +701,7 @@ window.__ModuleLoader__.load({
         ),
         (form.sources || []).includes('local')
           ? h('div', { style: S.hint },
-            '会自动扫描常见下载目录；ncm 自动解密；qmc / kgm 等加密格式需手动转换；只读取不修改原文件，不需要账号、不需要登录态。',
+            '会自动扫描常见下载目录；只读取可直接使用的音频，不修改原文件；不需要账号、不需要登录态。',
           )
           : null,
         ((form.sources || []).includes('auto') || form.refSearch)

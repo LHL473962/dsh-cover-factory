@@ -183,7 +183,7 @@ qa：old 仍卡 −13±1.5 LUFS；new 不卡响度，只卡峰值和削波（削
 
 - **本机绝对路径不要写进 `config_default.json`**：放到 `engine/config.local.json`（已加入 `.gitignore`）。
   加载顺序：`config_default.json` → `config.local.json`（可选，深度合并）→ `--config` / `job.config`（覆盖前者）。
-  本机的 yt-dlp / ncmdump / 其它解释器路径都写在 config.local.json，公开默认值保持干净（不含用户名路径）。
+  本机的 yt-dlp / 其它解析组件路径都写在 config.local.json，公开默认值保持干净（不含用户名路径）。
 - MSST：`D:/Apps/MSST/01_人声分离_MSST-GUI`（env/python.exe + kim ckpt）
 - Applio：`D:/Apps/_dl/applio/Applio-main`（applio-env/Scripts/python.exe）
 - 旧版 RVC：`D:/Apps/_dl/old_rvc/rvc`（rvc-env/python.exe；模型目录走 weight_root 环境变量）
@@ -215,14 +215,14 @@ job 配置（init 的 sources 字段）：
   - 酷狗：`%USERPROFILE%/Music/KuGou`、各盘符 `/KuGou`
   - 酷我：`%USERPROFILE%/Music/Kuwo`
   - 其它软件：`fetch.local_client_dirs` 里加 `[{"path": "...", "client": "other"}]`
-- 格式：`ncm` 自动用 ncmdump 解密（`paths.ncmdump_python` → fallbacks 探测，本机 `D:/Apps/Python311` 可用）；
-  `mp3/flac/wav/m4a` 直接转 44.1k stereo；`qmc*/kgm*/mflac/mgg/kwm` **不解密**，只记 detected + warning，不中断。
+- 格式：可直接使用的音频直接转 44.1k stereo；加密/专有格式只做探测与提示，不保证可用；
+  `mp3/flac/wav/m4a` 直接转 44.1k stereo；其余加密后缀只记 detected + warning，不中断。
 - 过滤：有 `keyword` 或 `singer` 就只取文件名包含关键词的（不区分大小写）；否则取全部（`limit` 默认 20）。
   `days>0` 只看最近 N 天（0 = 不按时间过滤）。
 - 报告：`work/raw/local_client_report.json`（file / client / format / used / reason）。
   `job.songs` 每个文件带 `client`（netease-client / qqmusic-client / …）、`sourcePath`、`format`；`job.local_client_report` 记报告路径。
-- **只读取，不修改**：不重命名、不删除、不往客户端目录写任何文件；解密产物写在 job 的 `work/raw/_ncm/`。
-- ncmdump 安装：`python -m pip install ncmdump`（解释器配 `paths.ncmdump_python`），或提供 `ncmdump.exe`。
+- **只读取，不修改**：不重命名、不删除、不往客户端目录写任何文件；中间产物写在 job 的 `work/raw/`。
+
 
 ## 多来源组合（folder + local_clients + search）
 

@@ -223,7 +223,7 @@ AI 无脑执行首选仓库根目录的 scripts/install.ps1（见 docs/INSTALL_A
 
 - 扫描网易云 / QQ音乐 / 酷狗 / 酷我的常见下载目录；`clients`（`netease` / `qqmusic` / `kugou` / `kuwo`，`"qq"` 也认）默认全部，`keyword` 默认 = 歌手名。
 - **不需要账号、不需要登录态、不联网**（除非你再开 `mode: "auto"` 抓取或 `refSearch`）；**只读，不修改原文件**。
-- 格式：常见音频都认；**ncm 自动解密**；`qmc` / `kgm` 等加密格式需要先手动转成 wav/flac/mp3，否则会被跳过。
+- 格式：常见音频都认；**加密/专有格式的可用性取决于本机环境**，插件不提供也不分发解析工具；无法解析会被跳过。
 - 写进 job 配置：`mode: "import"` + `sources: { local_clients: true, clients: [...], keyword: "..." }`（引擎目前只认 mode=import/auto，靠 `sources.local_clients` 识别本机客户端）；非法客户端名返回 `BAD_CLIENT`。
 - 预筛预览里的 `localFetch` 会给扫描到的文件数与格式分布（`fileCount` / `formats`）；fetch 跑之前是 `fetch-pending`。
 - 可以和其他来源组合：`sources: ["folder","local"]`（目录 + 本机客户端）或 `["local","auto"]`（本机 + B站搜索，需 `copyrightAck`）；每个来源各贡献几首会出现在 `preview.contributions`。

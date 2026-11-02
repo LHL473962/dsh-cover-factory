@@ -36,7 +36,7 @@
 - **目录导入**（`sources: ["folder"]` + `folder`）：用户自己的文件夹，只读；选了它就必须给 folder。
 - **本机客户端**（`sources: ["local"]`）：扫描网易云 / QQ音乐 / 酷狗 / 酷我**已下载**的文件。
   - 参数：`clients: ["netease"|"qqmusic"|"kugou"|"kuwo"]`（默认全部，`"qq"` 也认）、`keyword`（默认 = singer）。落盘时引擎侧是 `mode:"import" + sources.local_clients`，不用跟用户解释这个细节。
-  - **不需要账号、不需要登录态、只读不修改**；ncm 自动解密，`qmc`/`kgm` 等加密格式要用户先手动转。
+  - **不需要账号、不需要登录态、只读不修改**；只处理可直接使用的音频，加密格式由用户自行准备。
   - 用户说「用我电脑里下好的歌」就走这个，别让他手动找目录；非法客户端名会返回 `BAD_CLIENT`（返回里带 allowed）。
   - 建完看 `preview.localFetch`：`fileCount` + `formats` 是扫描结果；`fetch-pending` 说明还没跑 fetch。
 - **B 站搜索**（`sources: ["auto"]`）：联网抓取，必须先确认版权（见下一节）。
