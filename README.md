@@ -56,3 +56,8 @@ dsh.profile.bundles，再调用 engine/setup/bootstrap.py --install --with-model
 ## 本地音库导入
 
 支持导入 RVC .pth（不需要训练）；Synthesizer V 官方音库不可导入。见 docs/VOICE_BANK_IMPORT.md。
+
+
+## 优化与运维
+
+- 和声/主唱误判、机械音（protect + 混合输入）、f0 注入、孤儿进程清理：见 docs/OPTIMIZATION_FINDINGS.md
