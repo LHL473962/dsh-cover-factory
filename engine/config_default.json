@@ -116,7 +116,8 @@
     "extract_instrumental": true,
     "force_cpu": false,
     "device_ids": 0,
-    "timeout_sec": 7200
+    "timeout_sec": 7200,
+    "lead_ratio": 0.75
   },
   "rvc_deps": {
     "packages": [
@@ -205,7 +206,8 @@
     "filter_radius": 3,
     "rms_mix_rate": 1,
     "resample_sr": 0,
-    "timeout_sec": 3600
+    "timeout_sec": 3600,
+    "clean_protect": 0.5
   },
   "mix": {
     "target_lufs": -14,
@@ -249,8 +251,8 @@
       "peak_9k_gain_db": -2,
       "softclip_threshold": 0.5,
       "ir_wet": 0.1,
-      "limiter_db": -1.0,
-      "glue_ratio": 1.0
+      "limiter_db": -1,
+      "glue_ratio": 1
     }
   },
   "qa": {

@@ -58,7 +58,14 @@ Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*inference.
 
 注意：训练进程名是 `python.exe`，命令行里带 `dsh_rvc2.py train`；MSST 是 `inference.py`。
 
-## 6. 待办
+## 6. 已接入插件（0.2.1）
+
+- `options.vocalStyle = "clean"`：separate 阶段对目标曲跑 karaoke 主唱分离，按 `separate.lead_ratio`（默认 0.75）与普通分离人声混合；convert 阶段自动 `protect=0.5`
+- 备份：目标人声原版保留为 `vocals_bs317.wav`
+- 工具参数：`cover_setup({ vocalStyle: "clean" })`；设置页有「人声风格」选项
+- 端到端测试：`D:/VoiceData/exp/job_clean_test`（暮れ色，kim 素材 + clean）跑通
+
+## 7. 待办
 
 - 把“主唱优先 + 混合输入 + protect 0.5”做成插件可选参数
 - 参数消融：filter_radius / is_half / 模型合并 / 训练侧 f0

@@ -16,6 +16,9 @@ options.separateModel:
 
 import math
 import os
+import shutil
+import subprocess
+import sys
 
 from assets import audio, commands
 from stages import base
@@ -260,6 +263,44 @@ def _range_gate(job, cfg, plan):
     return data
 
 
+def _lg_try(job, cfg, plan):
+    try:
+        lg = _lead_guard(job, cfg, plan)
+        if isinstance(lg, dict) and not lg.get("ok"):
+            base.log("separate: lead_guard 失败（%s）" % str(lg.get("error"))[:200])
+        return lg
+    except Exception as exc:
+        base.log("separate: lead_guard 异常（%s）" % str(exc)[:200])
+        return None
+
+
+def _lead_guard(job, cfg, plan):
+    """主唱优先：目标曲再跑一次 karaoke 分离，和普通分离人声混合（默认 0.75/0.25）。"""
+    opts = job.get("options") or {}
+    if str(opts.get("vocalStyle") or "").lower() != "clean":
+        return None
+    tgt_name = _target_name(job)
+    tgt = next((x for x in plan if x.get("name") == tgt_name), None)
+    if not tgt or not base.file_ok(tgt.get("vocals", "")) or not base.file_ok(tgt.get("raw", "")):
+        return None
+    tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "lead_blend.py")
+    out = os.path.join(os.path.dirname(tgt["vocals"]), "vocals_blend.wav")
+    ratio = float((cfg.get("separate") or {}).get("lead_ratio", 0.75))
+    try:
+        r = subprocess.run([sys.executable, tool, "--raw", tgt["raw"], "--vocals", tgt["vocals"],
+                            "--out", out, "--ratio", str(ratio)], capture_output=True, text=True, timeout=1800)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:200]}
+    if r.returncode != 0 or not base.file_ok(out):
+        return {"ok": False, "error": (r.stderr or r.stdout or "lead_blend failed")[-300:]}
+    # 用混合版覆盖目标人声，原始 bs 版留档；下游全部走混合版
+    bak = os.path.join(os.path.dirname(tgt["vocals"]), "vocals_bs317.wav")
+    if not base.file_ok(bak):
+        shutil.copyfile(tgt["vocals"], bak)
+    shutil.copyfile(out, tgt["vocals"])
+    job["lead_guard"] = {"blend": base.rel(job, out), "backup": base.rel(job, bak), "ratio": ratio}
+    return {"ok": True, "out": out}
+
 def run(job, cfg):
     raw_dir = base.work(job, "raw")
     stems_dir = base.work(job, "stems")
@@ -305,6 +346,7 @@ def run(job, cfg):
         if verdict == "swap":
             msg = "STEMS_SWAPPED：人声/伴奏 stem 疑似接反；" + "；".join(warnings[:3])
             return base.result("failed", [base.rel(job, check_path)], {"model": model_id, "verdict": verdict}, error=msg)
+        _lg_try(job, cfg, plan)
         base.log("separate: 产物已存在且输入未变，跳过（stem_check=%s）" % verdict)
         metrics = dict(base.prev_metrics(job, STAGE) or {"songs": len(plan)})
         metrics.update({"model": model_id, "stemCheck": verdict})
@@ -355,6 +397,7 @@ def run(job, cfg):
     except RuntimeError as exc:
         return base.result("failed", [base.rel(job, p) for p in outs] + [base.rel(job, check_path)],
                            {"songs": len(plan), "model": model_id, "stemCheck": verdict}, error=str(exc))
+    _lg_try(job, cfg, plan)
     base.log("separate: 完成 %d 首（%d 个 stem，模型=%s，stem_check=%s）" % (
         len(plan), len(outs), model_id, verdict))
     return base.result(

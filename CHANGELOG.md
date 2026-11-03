@@ -30,3 +30,10 @@
 
 ## 版本策略说明
 0.2.0 之后不轻易提升次版本号；**0.3.0 需在“清亮”目标达成后触发**（见 docs/VERSIONING.md）。
+
+## 0.2.1 — 2026-11-03
+
+- 新增 `vocalStyle: clean`：目标曲主唱优先分离（karaoke）+ 混合输入（默认 0.75）+ `protect 0.5`
+- 设置页增加「人声风格」；`cover_setup` 支持 `vocalStyle`
+- 新增 `scripts/cleanup_gpu_orphans.ps1`
+- 文档：`docs/OPTIMIZATION_FINDINGS.md`

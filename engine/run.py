@@ -245,6 +245,11 @@ def cmd_init(args):
         return fail_json("BAD_MIX_PRESET", "options.mixPreset 只能是 old / new，收到：" + str(options.get("mixPreset")))
     if "mixPreset" in options:
         options["mixPreset"] = str(options["mixPreset"]).strip().lower()
+    vs = str(options.get("vocalStyle") or "").strip().lower()
+    if vs not in ("", "auto", "clean"):
+        return fail_json("BAD_VOCAL_STYLE", "options.vocalStyle 只能是 auto / clean，收到：" + str(options.get("vocalStyle")))
+    if vs:
+        options["vocalStyle"] = vs
     hum = str(options.get("humming") or "auto").strip().lower()
     if hum not in ("auto", "keep", "mute", "off", "manual"):
         return fail_json("BAD_HUMMING", "options.humming 只能是 auto / keep / mute / off / manual，收到：" + str(options.get("humming")))

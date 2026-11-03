@@ -59,11 +59,13 @@ def run(job, cfg):
     hum_seg_abs = ""
     if hum_seg_cfg:
         hum_seg_abs = hum_seg_cfg if os.path.isabs(hum_seg_cfg) else os.path.join(job.get("_workdir") or "", hum_seg_cfg)
+    vocal_style = str(opts.get("vocalStyle") or "").strip().lower()
+    protect = 0.5 if vocal_style == "clean" else ccfg.get("protect", 0.33)
     params = {
         "pitch": pitch,
         "f0_method": ccfg.get("f0_method", "rmvpe"),
         "index_rate": ccfg.get("index_rate", 0.75),
-        "protect": ccfg.get("protect", 0.33),
+        "protect": protect,
         "model": model_pth,
         "modelMtime": os.path.getmtime(model_pth),
         "humming": str(opts.get("humming") or "auto").strip().lower(),
