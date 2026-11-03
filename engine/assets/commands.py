@@ -122,7 +122,7 @@ def rvc_env(cfg, model_dir):
     return env
 
 
-def rvc_convert_cmd(cfg, model_name, index_path, input_path, opt_path, pitch=0, device=None):
+def rvc_convert_cmd(cfg, model_name, index_path, input_path, opt_path, pitch=0, device=None, index_rate=None, protect=None):
     c = cfg.get("convert") or {}
     root = _path(cfg, "rvc_root")
     cmd = [
@@ -134,8 +134,8 @@ def rvc_convert_cmd(cfg, model_name, index_path, input_path, opt_path, pitch=0, 
         "--opt_path", opt_path,
         "--f0method", str(c.get("f0_method", "rmvpe")),
         "--device", str(device or c.get("device", "cuda:0")),
-        "--index_rate", str(c.get("index_rate", 0.75)),
-        "--protect", str(c.get("protect", 0.33)),
+        "--index_rate", str(index_rate if index_rate is not None else c.get("index_rate", 0.75)),
+        "--protect", str(protect if protect is not None else c.get("protect", 0.33)),
         "--filter_radius", str(int(c.get("filter_radius", 3))),
         "--rms_mix_rate", str(c.get("rms_mix_rate", 1.0)),
         "--f0up_key", str(int(pitch)),

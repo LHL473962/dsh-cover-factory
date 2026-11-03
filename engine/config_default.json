@@ -207,7 +207,8 @@
     "rms_mix_rate": 1,
     "resample_sr": 0,
     "timeout_sec": 3600,
-    "clean_protect": 0.5
+    "clean_protect": 0.5,
+    "clean_index_rate": 0.66
   },
   "mix": {
     "target_lufs": -14,

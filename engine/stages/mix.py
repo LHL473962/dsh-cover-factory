@@ -182,6 +182,21 @@ def _run_new(job, cfg, tgt, stem, inst, vocal, target_vocals, ir, ir_used, shift
     loud = audio.loudness(ff, out)
     peak = loud.get("peak_db")
     lufs = loud.get("lufs")
+    # PEAK_GUARD：limiter 后仍可能过冲，按实测峰值再降一次
+    lim = float(ncfg.get("limiter_db", -1.0))
+    for _ in range(2):
+        if peak is None or float(peak) <= lim - 0.05:
+            break
+        delta = float(peak) - (lim - 0.2)
+        tmpg = out + ".g.wav"
+        r = base.run_cmd([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", out,
+                          "-af", "volume=%.2fdB" % (-delta), "-ac", "2", tmpg], timeout=timeout)
+        if r["returncode"] != 0 or not base.file_ok(tmpg):
+            break
+        os.replace(tmpg, out)
+        loud = audio.loudness(ff, out)
+        peak = loud.get("peak_db")
+        lufs = loud.get("lufs")
     metrics = {
         "mixPreset": "new",
         "vocalGainDb": round(float(gain), 3),

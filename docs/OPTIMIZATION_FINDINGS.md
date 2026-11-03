@@ -63,7 +63,9 @@ Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*inference.
 - `options.vocalStyle = "clean"`：separate 阶段对目标曲跑 karaoke 主唱分离，按 `separate.lead_ratio`（默认 0.75）与普通分离人声混合；convert 阶段自动 `protect=0.5`
 - 备份：目标人声原版保留为 `vocals_bs317.wav`
 - 工具参数：`cover_setup({ vocalStyle: "clean" })`；设置页有「人声风格」选项
-- 端到端测试：`D:/VoiceData/exp/job_clean_test`（暮れ色，kim 素材 + clean）跑通
+- 端到端测试：`D:/VoiceData/exp/job_clean_bs`（暮れ色，bs317 + clean）跑通
+- clean 模式默认 `index_rate=0.66`（`convert.clean_index_rate`）；普通模式仍 0.75
+- mix 新增峰值保护：limiter 后实测峰值仍 > 限值时自动再降 0.2dB 以内
 
 ## 7. 待办
 

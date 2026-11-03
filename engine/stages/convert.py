@@ -61,10 +61,11 @@ def run(job, cfg):
         hum_seg_abs = hum_seg_cfg if os.path.isabs(hum_seg_cfg) else os.path.join(job.get("_workdir") or "", hum_seg_cfg)
     vocal_style = str(opts.get("vocalStyle") or "").strip().lower()
     protect = 0.5 if vocal_style == "clean" else ccfg.get("protect", 0.33)
+    index_rate = float(ccfg.get("clean_index_rate", 0.66)) if vocal_style == "clean" else ccfg.get("index_rate", 0.75)
     params = {
         "pitch": pitch,
         "f0_method": ccfg.get("f0_method", "rmvpe"),
-        "index_rate": ccfg.get("index_rate", 0.75),
+        "index_rate": index_rate,
         "protect": protect,
         "model": model_pth,
         "modelMtime": os.path.getmtime(model_pth),
@@ -97,7 +98,7 @@ def run(job, cfg):
     device = opts.get("device") or ccfg.get("device")
     cmd = commands.rvc_convert_cmd(
         cfg, os.path.basename(model_pth), model_idx if base.file_ok(model_idx) else "",
-        vocals, out, pitch=pitch, device=device,
+        vocals, out, pitch=pitch, device=device, index_rate=index_rate, protect=protect,
     )
     res = base.run_cmd(
         cmd, cwd=rvc_root,

@@ -37,3 +37,9 @@
 - 设置页增加「人声风格」；`cover_setup` 支持 `vocalStyle`
 - 新增 `scripts/cleanup_gpu_orphans.ps1`
 - 文档：`docs/OPTIMIZATION_FINDINGS.md`
+
+## 0.2.2 — 2026-11-03
+
+- clean 模式：`index_rate=0.66`、`protect=0.5`（`convert.clean_index_rate`）
+- RVC 命令支持 index_rate/protect 覆盖（修 0.2.1 里 clean 参数没生效）
+- mix 新增峰值保护（limiter 后仍过冲时自动再降）
